@@ -36,6 +36,7 @@ TEST_SUITES=(
     "test-plan-file-validation.sh"
     "test-template-references.sh"
     "test-state-exit-naming.sh"
+    "test-stop-gate.sh"
     "test-templates-comprehensive.sh"
     "test-plan-file-hooks.sh"
     "test-error-scenarios.sh"

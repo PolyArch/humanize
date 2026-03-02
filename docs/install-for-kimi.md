@@ -1,0 +1,253 @@
+# Install Humanize for Kimi CLI
+
+This guide explains how to install the Humanize skills for [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli).
+
+## Overview
+
+Humanize provides three Agent Skills for kimi:
+
+| Skill | Type | Purpose |
+|-------|------|---------|
+| `humanize` | Standard | General guidance for all workflows |
+| `humanize-gen-plan` | Flow | Generate structured plan from draft |
+| `humanize-rlcr` | Flow | Iterative development with Codex review |
+
+## Installation
+
+### Quick Install (Recommended)
+
+From the Humanize repo root, run:
+
+```bash
+./scripts/install-skills-kimi.sh
+```
+
+This command will:
+- Sync `humanize`, `humanize-gen-plan`, and `humanize-rlcr` into `~/.config/agents/skills`
+- Configure `HUMANIZE_ROOT` in your shell profile
+- Print the `source` command to apply changes in the current shell
+
+Common installer script (all targets):
+
+```bash
+./scripts/install-skill.sh --target kimi
+```
+
+### Manual Install
+
+### 1. Clone or navigate to the humanize repository
+
+```bash
+cd /path/to/humanize
+```
+
+### 2. Set Humanize runtime root
+
+The skills call scripts from the Humanize repository.  
+Export `HUMANIZE_ROOT` so skills can find them without hard-coded paths:
+
+```bash
+export HUMANIZE_ROOT="$(pwd)"
+
+# Persist in your shell profile (choose one)
+echo 'export HUMANIZE_ROOT="/path/to/humanize"' >> ~/.zshrc
+# or
+echo 'export HUMANIZE_ROOT="/path/to/humanize"' >> ~/.bashrc
+```
+
+### 3. Copy skills to kimi's skills directory
+
+```bash
+# Create the skills directory if it doesn't exist
+mkdir -p ~/.config/agents/skills
+
+# Copy all three skills
+cp -r skills/humanize ~/.config/agents/skills/
+cp -r skills/humanize-gen-plan ~/.config/agents/skills/
+cp -r skills/humanize-rlcr ~/.config/agents/skills/
+```
+
+### 4. Verify installation
+
+```bash
+# List installed skills
+ls -la ~/.config/agents/skills/
+
+# Should show:
+# humanize/
+# humanize-gen-plan/
+# humanize-rlcr/
+```
+
+### 5. Restart kimi (if already running)
+
+Skills are loaded at startup. Restart kimi to pick up the new skills:
+
+```bash
+# Exit current kimi session
+/exit
+
+# Or press Ctrl-D
+
+# Start kimi again
+kimi
+```
+
+## Usage
+
+### List available skills
+
+```bash
+/help
+```
+
+Look for the "Skills" section in the help output.
+
+### Use the skills
+
+#### 1. Generate plan from draft
+
+```bash
+# Start the flow (will ask for input/output paths)
+/flow:humanize-gen-plan
+
+# Or load as standard skill
+/skill:humanize-gen-plan
+```
+
+#### 2. Start RLCR development loop
+
+```bash
+# Start with plan file
+/flow:humanize-rlcr path/to/plan.md
+
+# With options
+/flow:humanize-rlcr path/to/plan.md --max 20 --push-every-round
+
+# Skip implementation, go directly to code review
+/flow:humanize-rlcr --skip-impl
+
+# Load as standard skill (no auto-execution)
+/skill:humanize-rlcr
+```
+
+#### 3. Get general guidance
+
+```bash
+/skill:humanize
+```
+
+## Command Options
+
+### RLCR Loop Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `path/to/plan.md` | Plan file path | Required (unless --skip-impl) |
+| `--max N` | Maximum iterations | 42 |
+| `--codex-model MODEL:EFFORT` | Codex model | gpt-5.3-codex:xhigh |
+| `--codex-timeout SECONDS` | Review timeout | 5400 |
+| `--base-branch BRANCH` | Base for code review | auto-detect |
+| `--full-review-round N` | Full alignment check interval | 5 |
+| `--skip-impl` | Skip to code review | false |
+| `--push-every-round` | Push after each round | false |
+
+### Generate Plan Options
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `--input <path>` | Draft file path | Yes |
+| `--output <path>` | Plan output path | Yes |
+
+## Prerequisites
+
+Ensure you have `codex` CLI installed:
+
+```bash
+codex --version
+```
+
+The skills will use `gpt-5.3-codex` with `xhigh` effort level by default.
+
+## Uninstall
+
+To remove the skills:
+
+```bash
+rm -rf ~/.config/agents/skills/humanize
+rm -rf ~/.config/agents/skills/humanize-gen-plan
+rm -rf ~/.config/agents/skills/humanize-rlcr
+```
+
+## Troubleshooting
+
+### Skills not showing up
+
+1. Check the skills directory exists:
+   ```bash
+   ls ~/.config/agents/skills/
+   ```
+
+2. Ensure SKILL.md files are present:
+   ```bash
+   cat ~/.config/agents/skills/humanize/SKILL.md | head -5
+   ```
+
+3. Restart kimi completely
+
+### Codex not found
+
+The skills expect `codex` to be in your PATH. If using a proxy, ensure `~/.zprofile` is configured:
+
+```bash
+# Add to ~/.zprofile if needed
+export OPENAI_API_KEY="your-api-key"
+# or other proxy settings
+```
+
+### Scripts not found
+
+If skills report missing scripts like `setup-rlcr-loop.sh`, verify:
+
+```bash
+echo "$HUMANIZE_ROOT"
+ls -la "$HUMANIZE_ROOT/scripts"
+```
+
+If empty or wrong, update `HUMANIZE_ROOT` in your shell profile and restart kimi.
+
+### Installer options
+
+The installer supports:
+
+```bash
+./scripts/install-skill.sh --help
+```
+
+Common examples:
+
+```bash
+# Preview only
+./scripts/install-skills-kimi.sh --dry-run
+
+# Custom skills directory
+./scripts/install-skills-kimi.sh --skills-dir /custom/skills/dir
+
+# Do not modify shell profile
+./scripts/install-skills-kimi.sh --no-persist
+```
+
+### Output files not found
+
+The skills save output to:
+- Cache: `~/.cache/humanize/<project>/<timestamp>/`
+- Loop data: `.humanize/rlcr/<timestamp>/`
+
+Ensure these directories are writable.
+
+## See Also
+
+- [Kimi CLI Documentation](https://moonshotai.github.io/kimi-cli/)
+- [Agent Skills Format](https://agentskills.io/)
+- [Install for Codex](./install-for-codex.md)
+- [Humanize README](../README.md)

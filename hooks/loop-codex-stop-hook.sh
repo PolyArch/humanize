@@ -112,21 +112,44 @@ MAX_ITERATIONS="$STATE_MAX_ITERATIONS"
 PUSH_EVERY_ROUND="$STATE_PUSH_EVERY_ROUND"
 FULL_REVIEW_ROUND="${STATE_FULL_REVIEW_ROUND:-5}"
 REVIEW_STARTED="$STATE_REVIEW_STARTED"
-CODEX_MODEL="${STATE_CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
-CODEX_EFFORT="${STATE_CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
+# RLCR mode split:
+# - codex exec uses state codex_model/codex_effort
+# - codex review uses same model, with fixed effort "high"
+#
+# Default model depends on runtime:
+# - Claude Code plugin flow -> DEFAULT_CODEX_MODEL (historically gpt-5.3-codex)
+# - Skill mode (Codex/Kimi) -> gpt-5.2
+DEFAULT_RLCR_MODEL="gpt-5.2"
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+    DEFAULT_RLCR_MODEL="${DEFAULT_CODEX_MODEL:-gpt-5.3-codex}"
+fi
+CODEX_EXEC_MODEL="${STATE_CODEX_MODEL:-$DEFAULT_RLCR_MODEL}"
+CODEX_EXEC_EFFORT="${STATE_CODEX_EFFORT:-${DEFAULT_CODEX_EFFORT:-xhigh}}"
+CODEX_REVIEW_MODEL="${STATE_CODEX_MODEL:-$DEFAULT_RLCR_MODEL}"
+CODEX_REVIEW_EFFORT="high"
 CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
 ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-false}"
 AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
 
 # Re-validate Codex Model and Effort for YAML safety (in case state.md was manually edited)
 # Use same validation patterns as setup-rlcr-loop.sh
-if [[ ! "$CODEX_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-    echo "Error: Invalid codex_model in state file: $CODEX_MODEL" >&2
+if [[ ! "$CODEX_EXEC_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Invalid codex_model in state file: $CODEX_EXEC_MODEL" >&2
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
-if [[ ! "$CODEX_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "Error: Invalid codex_effort in state file: $CODEX_EFFORT" >&2
+if [[ ! "$CODEX_EXEC_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: Invalid codex_effort in state file: $CODEX_EXEC_EFFORT" >&2
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    exit 0
+fi
+if [[ ! "$CODEX_REVIEW_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Invalid review model in hook config: $CODEX_REVIEW_MODEL" >&2
+    end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
+    exit 0
+fi
+if [[ ! "$CODEX_REVIEW_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: Invalid review effort in hook config: $CODEX_REVIEW_EFFORT" >&2
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
@@ -916,9 +939,9 @@ mkdir -p "$CACHE_DIR"
 
 # Build Codex command arguments for codex exec
 # codex exec uses: -m MODEL, --full-auto (or --dangerously-bypass-approvals-and-sandbox), -C DIR, -c key=value
-CODEX_EXEC_ARGS=("-m" "$CODEX_MODEL")
-if [[ -n "$CODEX_EFFORT" ]]; then
-    CODEX_EXEC_ARGS+=("-c" "model_reasoning_effort=${CODEX_EFFORT}")
+CODEX_EXEC_ARGS=("-m" "$CODEX_EXEC_MODEL")
+if [[ -n "$CODEX_EXEC_EFFORT" ]]; then
+    CODEX_EXEC_ARGS+=("-c" "model_reasoning_effort=${CODEX_EXEC_EFFORT}")
 fi
 
 # Determine automation flag based on environment variable
@@ -934,9 +957,9 @@ CODEX_EXEC_ARGS+=("$CODEX_AUTO_FLAG" "-C" "$PROJECT_ROOT")
 # Build Codex command arguments for codex review
 # codex review uses different format: -c model=xxx -c review_model=xxx -c model_reasoning_effort=xxx
 # No -m, no --full-auto, no -C
-CODEX_REVIEW_ARGS=("-c" "model=${CODEX_MODEL}" "-c" "review_model=${CODEX_MODEL}")
-if [[ -n "$CODEX_EFFORT" ]]; then
-    CODEX_REVIEW_ARGS+=("-c" "model_reasoning_effort=${CODEX_EFFORT}")
+CODEX_REVIEW_ARGS=("-c" "model=${CODEX_REVIEW_MODEL}" "-c" "review_model=${CODEX_REVIEW_MODEL}")
+if [[ -n "$CODEX_REVIEW_EFFORT" ]]; then
+    CODEX_REVIEW_ARGS+=("-c" "model_reasoning_effort=${CODEX_REVIEW_EFFORT}")
 fi
 
 # ========================================
