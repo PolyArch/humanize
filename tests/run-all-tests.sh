@@ -92,6 +92,19 @@ ZSH_TESTS=(
 OUTPUT_DIR=$(mktemp -d)
 trap "rm -rf $OUTPUT_DIR" EXIT
 
+# Provide a mock codex binary when the real one is not installed.
+# Tests only need codex to pass the `command -v codex` check in setup scripts;
+# tests that require specific codex behavior already create their own mocks.
+if ! command -v codex &>/dev/null; then
+    mkdir -p "$OUTPUT_DIR/mock-bin"
+    cat > "$OUTPUT_DIR/mock-bin/codex" << 'MOCK_CODEX'
+#!/bin/bash
+exit 0
+MOCK_CODEX
+    chmod +x "$OUTPUT_DIR/mock-bin/codex"
+    export PATH="$OUTPUT_DIR/mock-bin:$PATH"
+fi
+
 # Check if a suite needs zsh
 needs_zsh() {
     local suite="$1"

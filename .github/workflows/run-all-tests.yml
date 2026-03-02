@@ -1,0 +1,22 @@
+name: Run All Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  run-all-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y zsh jq
+
+      - name: Run all tests
+        run: |
+          chmod +x tests/run-all-tests.sh
+          ./tests/run-all-tests.sh
