@@ -1195,6 +1195,9 @@ mkdir -p "$TEST_DIR/repo49/bin"
 echo '#!/bin/bash
 exit 0' > "$TEST_DIR/repo49/bin/codex"
 chmod +x "$TEST_DIR/repo49/bin/codex"
+echo '#!/bin/bash
+exit 0' > "$TEST_DIR/repo49/bin/jq"
+chmod +x "$TEST_DIR/repo49/bin/jq"
 
 OUTPUT=$(PATH="$TEST_DIR/repo49/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo49" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
