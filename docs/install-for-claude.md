@@ -26,6 +26,24 @@ If you have the plugin cloned locally:
 claude --plugin-dir /path/to/humanize
 ```
 
+## Option 3: Try Experimental Features (dev branch)
+
+The `dev` branch contains experimental features that are not yet released to `main`. To try them locally:
+
+```bash
+git clone https://github.com/humania-org/humanize.git
+cd humanize
+git checkout dev
+```
+
+Then start Claude Code with the local plugin directory:
+
+```bash
+claude --plugin-dir /path/to/humanize
+```
+
+Note: The `dev` branch may contain unstable or incomplete features. For production use, stick with Option 1 (Git Marketplace) which tracks the stable `main` branch.
+
 ## Verify Installation
 
 After installing, you should see Humanize commands available:
