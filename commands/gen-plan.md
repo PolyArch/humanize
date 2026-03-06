@@ -18,6 +18,16 @@ hide-from-slash-command-tool: "true"
 
 Read and execute below with ultrathink.
 
+## Hard Constraint: No Coding During Plan Generation
+
+This command MUST ONLY generate a plan document during the planning phases. It MUST NOT implement tasks, modify repository source code, or make commits/PRs while producing the plan.
+
+Permitted writes (before any optional auto-start) are limited to:
+- The plan output file (`--output`)
+- Optional `_zh` translated plan (only when `CHINESE_PLAN_ENABLED=true`)
+
+If `--auto-start-rlcr-if-converged` is enabled and `PLAN_CONVERGENCE_STATUS=converged` with no pending user decisions, the command MAY immediately start the RLCR loop by running `/humanize:start-rlcr-loop <output-plan-path>`. All coding happens in that subsequent command/loop, not during plan generation.
+
 This command transforms a user's draft document into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions.
 
 ## Workflow Overview
@@ -31,7 +41,7 @@ This command transforms a user's draft document into a well-structured implement
 7. **Iterative Convergence Loop**: Claude and a second Codex iteratively challenge/refine plan reasonability
 8. **Issue and Disagreement Resolution**: Resolve unresolved opposite opinions (or skip manual review if converged and auto-start mode is enabled)
 9. **Final Plan Generation**: Generate the converged structured plan.md with task routing tags
-10. **Write and Complete**: Write output file, optionally write `_zh` Chinese variant, optionally auto-start work, and report results
+10. **Write and Complete**: Write output file, optionally write `_zh` Chinese variant, optionally auto-start implementation, and report results
 
 ---
 
@@ -44,7 +54,7 @@ Parse `$ARGUMENTS` and set:
 - `GEN_PLAN_MODE_DIRECT=true` if `--direct` is present
 - If both `--discussion` and `--direct` are present simultaneously, report error "Cannot use --discussion and --direct together" and stop
 
-`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately, but only when plan convergence is achieved and no pending user decisions remain.
+`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking `/humanize:start-rlcr-loop <output-plan-path>`), but only when plan convergence is achieved and no pending user decisions remain.
 
 ---
 
@@ -517,10 +527,16 @@ If all of the following are true:
 Then start work immediately by running:
 
 ```bash
+/humanize:start-rlcr-loop <output-plan-path>
+```
+
+If the command invocation is not available in this context, fall back to the setup script:
+
+```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh" --plan-file <output-plan-path>
 ```
 
-If the auto-start command fails, report the failure reason and provide the exact manual fallback command:
+If the auto-start attempt fails, report the failure reason and provide the exact manual command for the user to run:
 
 ```bash
 /humanize:start-rlcr-loop <output-plan-path>
