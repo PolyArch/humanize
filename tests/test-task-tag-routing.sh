@@ -149,7 +149,7 @@ EOF
 ---
 current_round: 0
 max_iterations: 10
-codex_model: gpt-5.3-codex
+codex_model: reviewer-model-placeholder
 codex_effort: xhigh
 codex_timeout: 5400
 push_every_round: false
