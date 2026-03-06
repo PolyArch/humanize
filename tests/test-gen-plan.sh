@@ -234,6 +234,18 @@ else
     fail "plan template includes coding/analyze task tag column" "tag column in task table" "missing"
 fi
 
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "### Step 1.5: Consolidate Pending User Decisions" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command includes consolidate pending user decisions step"
+else
+    fail "gen-plan command includes consolidate pending user decisions step" "Step 1.5 section" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "QUESTIONS_FOR_USER" "$GEN_PLAN_CMD" && grep -q "needs_user_decision" "$GEN_PLAN_CMD"; then
+    pass "gen-plan consolidation step references both question sources"
+else
+    fail "gen-plan consolidation step references both question sources" "QUESTIONS_FOR_USER and needs_user_decision" "missing one or both"
+fi
+
 # ----------------------------------------
 # PT-6: Agent name validation
 # ----------------------------------------

@@ -256,6 +256,22 @@ Decide if manual review can be skipped:
 
 If `HUMAN_REVIEW_REQUIRED=false`, skip Step 2-4 and continue directly to Phase 7.
 
+### Step 1.5: Consolidate Pending User Decisions (runs unconditionally)
+
+Before proceeding (regardless of `HUMAN_REVIEW_REQUIRED`), consolidate all user-facing questions from prior phases into the plan's `## Pending User Decisions` section:
+
+1. Extract `QUESTIONS_FOR_USER` items from Codex Analysis v1 (Phase 3)
+2. Extract items with status `needs_user_decision` from the final convergence matrix (Phase 5) — use the last round's state, not intermediate rounds
+3. Deduplicate: if the same topic appears in both sources, merge into one entry
+4. For each collected item, check if it was substantively resolved during Phase 4-5 plan refinement (i.e., Claude addressed it and second Codex agreed in a subsequent round). Remove only items with clear evidence of resolution.
+5. Write all remaining unresolved items into the plan's `## Pending User Decisions` section. Use `DEC-N` identifiers. Set `Decision Status` to `PENDING`.
+   - For Claude-vs-Codex disagreements: fill `Claude Position`, `Codex Position`, and `Tradeoff Summary`
+   - For open questions (no opposing positions): set `Claude Position` to Claude's tentative answer (if any), `Codex Position` to `N/A - open question`, and `Tradeoff Summary` to the question's context
+
+This ensures:
+- When `HUMAN_REVIEW_REQUIRED=true`: items are visible for Steps 2-4 user resolution
+- When `HUMAN_REVIEW_REQUIRED=false`: items block auto-start via Phase 8 Step 5's `PENDING` check
+
 ### Step 2: Resolve Analysis Issues (when manual review is required)
 
 If any issues are found during Codex-first analysis, Claude analysis, or convergence loop, use AskUserQuestion to clarify with the user.
