@@ -261,6 +261,63 @@ get_fast_color() {
 
 FAST_COLOR=$(get_fast_color "$FAST_MODE")
 
+# Build context usage progress bar
+# Format: [###60%###|  40%   ]
+# Color: remaining >70% green, 30-70% yellow, <30% red
+build_context_bar() {
+    local used_pct=${1:-0}
+    local remaining_pct=$((100 - used_pct))
+    local bar_width=20
+
+    # Color for remaining portion based on remaining percentage
+    local remain_color
+    if [[ $remaining_pct -gt 70 ]]; then
+        remain_color="\e[32m"    # Green
+    elif [[ $remaining_pct -ge 30 ]]; then
+        remain_color="\e[33m"    # Yellow
+    else
+        remain_color="\e[31m"    # Red
+    fi
+
+    # Used portion: white background + black foreground
+    local used_style="\e[47;30m"
+    local reset="\e[0m"
+
+    local used_width=$(( (used_pct * bar_width + 50) / 100 ))
+    local remain_width=$(( bar_width - used_width ))
+
+    # Build used portion: spaces with white bg, percentage label centered
+    local used_label="${used_pct}%"
+    local used_str=""
+    local i
+    for (( i = 0; i < used_width; i++ )); do
+        used_str+=" "
+    done
+    if [[ $used_width -ge ${#used_label} ]]; then
+        local offset=$(( (used_width - ${#used_label}) / 2 ))
+        used_str="${used_str:0:offset}${used_label}${used_str:offset+${#used_label}}"
+    fi
+
+    # Build remaining portion: spaces, percentage label centered
+    local remain_label="${remaining_pct}%"
+    local remain_str=""
+    for (( i = 0; i < remain_width; i++ )); do
+        remain_str+=" "
+    done
+    if [[ $remain_width -ge ${#remain_label} ]]; then
+        local offset=$(( (remain_width - ${#remain_label}) / 2 ))
+        remain_str="${remain_str:0:offset}${remain_label}${remain_str:offset+${#remain_label}}"
+    fi
+
+    printf "[%b%s%b|%b%s%b]" "$used_style" "$used_str" "$reset" "$remain_color" "$remain_str" "$reset"
+}
+
+CONTEXT_USED=$(get_value '.context_window.used_percentage')
+CONTEXT_USED=${CONTEXT_USED:-0}
+# Round to integer
+CONTEXT_USED=$(printf "%.0f" "$CONTEXT_USED")
+CONTEXT_BAR=$(build_context_bar "$CONTEXT_USED")
+
 # Define colors
 CORAL="\e[38;5;173m"      # Claude branding - for MODEL
 CYAN="\e[36m"             # Info - for CWD
@@ -271,15 +328,35 @@ BLUE="\e[34m"             # Label - for Session
 MAGENTA="\e[35m"          # Label - for RLCR and Fast
 RESET="\e[0m"
 
-# Output with colors
-printf "%b%s%b [%b%s%b] %b%s%b | %b\$%s%b @ %s | lines: %b+%s%b, %b-%s%b | %bSession:%b %b%s%b | %bFast:%b %b%s%b | %bRLCR:%b %b%s%b\n" \
+# Auto-rename tmux window to session customTitle if inside tmux
+if [[ -n "$TMUX" && -n "$SESSION_DISPLAY" ]]; then
+    # UUID pattern: 8-4-4-4-12 hex chars
+    if [[ ! "$SESSION_DISPLAY" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        tmux rename-window "$SESSION_DISPLAY" 2>/dev/null
+    fi
+fi
+
+# Shorten CWD: replace $HOME with ~
+CWD_SHORT="${CWD/#$HOME/\~}"
+
+# Line 1: model | cost @ duration
+printf "%b%s%b | %b\$%s%b @ %s\n" \
     "$CORAL" "${MODEL:-?}" "$RESET" \
-    "$CYAN" "${CWD:-?}" "$RESET" \
-    "$YELLOW" "$BRANCH" "$RESET" \
     "$GREEN" "$COST_STR" "$RESET" \
-    "$DURATION_STR" \
+    "$DURATION_STR"
+
+# Line 2: context bar
+printf "%b\n" "$CONTEXT_BAR"
+
+# Line 3: cwd [branch] | lines
+printf "%b%s%b [%b%s%b] | lines: %b+%s%b, %b-%s%b\n" \
+    "$CYAN" "${CWD_SHORT:-?}" "$RESET" \
+    "$YELLOW" "$BRANCH" "$RESET" \
     "$GREEN" "$LINES_ADDED" "$RESET" \
-    "$RED" "$LINES_REMOVED" "$RESET" \
+    "$RED" "$LINES_REMOVED" "$RESET"
+
+# Line 3: session | fast | rlcr
+printf "%bSession:%b %b%s%b | %bFast:%b %b%s%b | %bRLCR:%b %b%s%b\n" \
     "$BLUE" "$RESET" \
     "$CYAN" "${SESSION_DISPLAY:-?}" "$RESET" \
     "$MAGENTA" "$RESET" \
