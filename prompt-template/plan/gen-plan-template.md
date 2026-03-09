@@ -107,14 +107,14 @@ Each task must include exactly one routing tag:
 
 This template is used to produce the main output file (e.g., `plan.md`).
 
-### Chinese Variant (`_zh` file)
+### Translated Language Variant
 
-When `chinese_plan=true` is set in `.humanize/config.json`, a `_zh` variant of the output file is also written after the main file. The `_zh` filename is constructed by inserting `_zh` immediately before the file extension:
+When `alternative_plan_language` is set to a supported language name in `.humanize/config.json`, a translated variant of the output file is also written after the main file. The variant filename is constructed by inserting `_<code>` (the ISO 639-1 code from the built-in mapping table) immediately before the file extension:
 
-- `plan.md` becomes `plan_zh.md`
-- `docs/my-plan.md` becomes `docs/my-plan_zh.md`
-- `output` (no extension) becomes `output_zh`
+- `plan.md` becomes `plan_<code>.md` (e.g. `plan_zh.md` for Chinese, `plan_ko.md` for Korean)
+- `docs/my-plan.md` becomes `docs/my-plan_<code>.md`
+- `output` (no extension) becomes `output_<code>`
 
-The `_zh` file contains a full Chinese translation of the English plan. All identifiers (`AC-*`, task IDs, file paths, API names, command flags) remain unchanged, as they are language-neutral.
+The translated variant file contains a full translation of the main plan file's current content in the configured language. All identifiers (`AC-*`, task IDs, file paths, API names, command flags) remain unchanged, as they are language-neutral.
 
-When `chinese_plan=false` (the default), or when `.humanize/config.json` does not exist, or when the `chinese_plan` field is absent, the `_zh` file is NOT written. A missing config file is not an error.
+When `alternative_plan_language` is empty, absent, set to `"English"`, or set to an unsupported language, no translated variant is written. If `.humanize/config.json` does not exist at startup, a default config with `alternative_plan_language=""` is created automatically.

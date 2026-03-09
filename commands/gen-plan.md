@@ -24,7 +24,8 @@ This command MUST ONLY generate a plan document during the planning phases. It M
 
 Permitted writes (before any optional auto-start) are limited to:
 - The plan output file (`--output`)
-- Optional `_zh` translated plan (only when `CHINESE_PLAN_ENABLED=true`)
+- Optional translated language variant (only when `ALT_PLAN_LANGUAGE` is configured)
+- `.humanize/config.json` (created with defaults only when the file does not already exist)
 
 If `--auto-start-rlcr-if-converged` is enabled, the command MAY immediately start the RLCR loop by running `/humanize:start-rlcr-loop <output-plan-path>`, but only in `discussion` mode when `PLAN_CONVERGENCE_STATUS=converged` and there are no pending user decisions. All coding happens in that subsequent command/loop, not during plan generation.
 
@@ -35,7 +36,7 @@ This command transforms a user's draft document into a well-structured implement
 > **Sequential Execution Constraint**: All phases below MUST execute strictly in order. Do NOT parallelize tool calls across different phases. Each phase must fully complete before the next one begins.
 
 1. **Execution Mode Setup**: Parse optional behaviors from command arguments
-2. **Load Project Config**: Read `.humanize/config.json` and extract `chinese_plan` flag
+2. **Load Project Config**: Read `.humanize/config.json` and extract `alternative_plan_language` setting
 3. **IO Validation**: Validate input and output paths
 4. **Relevance Check**: Verify draft is relevant to the repository
 5. **Codex First-Pass Analysis**: Use one planning Codex before Claude synthesizes plan details
@@ -43,7 +44,7 @@ This command transforms a user's draft document into a well-structured implement
 7. **Iterative Convergence Loop**: Claude and a second Codex iteratively challenge/refine plan reasonability
 8. **Issue and Disagreement Resolution**: Resolve unresolved opposite opinions (or skip manual review if converged, auto-start mode is enabled, and `GEN_PLAN_MODE=discussion`)
 9. **Final Plan Generation**: Generate the converged structured plan.md with task routing tags
-10. **Write and Complete**: Write output file, optionally write `_zh` Chinese variant, optionally auto-start implementation, and report results
+10. **Write and Complete**: Write output file, optionally write translated language variant, optionally auto-start implementation, and report results
 
 ---
 
@@ -65,20 +66,54 @@ Parse `$ARGUMENTS` and set:
 After setting execution mode flags, load the project-level configuration:
 
 1. Attempt to read `.humanize/config.json` from the project root (the repository root where the command was invoked).
-2. If the file does not exist, treat all config fields as absent. This is NOT an error; continue normally.
-3. If the file exists, parse it as JSON and extract the `chinese_plan` field:
-   - If `chinese_plan` is `true` (boolean), set `CHINESE_PLAN_ENABLED=true`.
-   - Otherwise (field absent, `false`, or any non-true value), set `CHINESE_PLAN_ENABLED=false`.
-4. Also extract the `gen_plan_mode` field from the same config:
+2. If the file does not exist:
+   - Create the `.humanize/` directory if it does not already exist.
+   - Write a default `.humanize/config.json` with the following content:
+     ```json
+     {
+       "alternative_plan_language": "",
+       "gen_plan_mode": "discussion"
+     }
+     ```
+   - Log: `No .humanize/config.json found. Created default config at .humanize/config.json`
+   - If directory creation or file write fails, log a warning and continue with defaults (do not block execution).
+   - Continue with the default values (`ALT_PLAN_LANGUAGE=""`, `ALT_PLAN_LANG_CODE=""`, `GEN_PLAN_MODE=discussion`).
+3. If the file exists, parse it as JSON and resolve `alternative_plan_language`:
+   - **If `alternative_plan_language` is present** (even if empty string), use its value. If deprecated `chinese_plan` field is also present, log: `Warning: deprecated "chinese_plan" field ignored; "alternative_plan_language" takes precedence. Remove "chinese_plan" from .humanize/config.json.`
+   - **If `alternative_plan_language` is absent but `chinese_plan` is present** (backward compatibility):
+     - If `chinese_plan` is `true` (boolean), treat as `alternative_plan_language="Chinese"`. Log: `Warning: deprecated "chinese_plan" field detected. Replace with "alternative_plan_language": "Chinese" in .humanize/config.json.`
+     - Otherwise (`false`, absent, or any non-true value), treat as `alternative_plan_language=""` (disabled).
+   - **If neither field is present**, set `alternative_plan_language=""` (disabled).
+4. Resolve `ALT_PLAN_LANGUAGE` and `ALT_PLAN_LANG_CODE` from the effective `alternative_plan_language` value using the built-in mapping table below. Matching is **case-insensitive**.
+
+   | Language   | Code | Suffix |
+   |------------|------|--------|
+   | Chinese    | zh   | `_zh`  |
+   | Korean     | ko   | `_ko`  |
+   | Japanese   | ja   | `_ja`  |
+   | Spanish    | es   | `_es`  |
+   | French     | fr   | `_fr`  |
+   | German     | de   | `_de`  |
+   | Portuguese | pt   | `_pt`  |
+   | Russian    | ru   | `_ru`  |
+   | Arabic     | ar   | `_ar`  |
+
+   Matching accepts both the language name (e.g. `"Chinese"`) and the ISO 639-1 code (e.g. `"zh"`), both case-insensitive. Non-string JSON values are treated as absent. Leading/trailing whitespace is trimmed before matching.
+
+   - If the value is empty or absent: set `ALT_PLAN_LANGUAGE=""` and `ALT_PLAN_LANG_CODE=""` (disabled).
+   - If the value is `"English"` or `"en"` (case-insensitive): set `ALT_PLAN_LANGUAGE=""` and `ALT_PLAN_LANG_CODE=""` (no-op; the plan is already in English).
+   - If the value matches a language name or code in the table: set `ALT_PLAN_LANGUAGE` to the matched language name and `ALT_PLAN_LANG_CODE` to the corresponding code.
+   - If the value does NOT match any language name or code in the table: set `ALT_PLAN_LANGUAGE=""` and `ALT_PLAN_LANG_CODE=""` (disabled). Log: `Warning: unsupported alternative_plan_language "<value>". Supported values: Chinese (zh), Korean (ko), Japanese (ja), Spanish (es), French (fr), German (de), Portuguese (pt), Russian (ru), Arabic (ar). Translation variant will not be generated.`
+5. Also extract the `gen_plan_mode` field from the same config:
    - Valid values: `"discussion"` or `"direct"` (case-insensitive).
    - Invalid or absent values: treat as absent (fall back to default) and log a warning if the value is present but invalid.
-5. Resolve `GEN_PLAN_MODE` using the following priority (highest to lowest), with CLI flags taking priority over project config:
+6. Resolve `GEN_PLAN_MODE` using the following priority (highest to lowest), with CLI flags taking priority over project config:
    - CLI flag: if `GEN_PLAN_MODE_DISCUSSION=true`, set `GEN_PLAN_MODE=discussion`; if `GEN_PLAN_MODE_DIRECT=true`, set `GEN_PLAN_MODE=direct`
    - Config file `gen_plan_mode` field (if valid)
    - Default: `discussion`
-6. A malformed JSON file should be reported as a warning but must NOT stop execution; fall back to `CHINESE_PLAN_ENABLED=false` and `GEN_PLAN_MODE=discussion`.
+7. A malformed JSON file should be reported as a warning but must NOT stop execution; fall back to `ALT_PLAN_LANGUAGE=""`, `ALT_PLAN_LANG_CODE=""`, and `GEN_PLAN_MODE=discussion`.
 
-`CHINESE_PLAN_ENABLED` controls whether a `_zh` Chinese variant of the output file is written in Phase 8.
+`ALT_PLAN_LANGUAGE` and `ALT_PLAN_LANG_CODE` control whether a translated language variant of the output file is written in Phase 8. When `ALT_PLAN_LANGUAGE` is non-empty, a variant file with the `_<ALT_PLAN_LANG_CODE>` suffix is generated.
 
 ---
 
@@ -432,17 +467,17 @@ Each task must include exactly one routing tag:
 
 This template is used to produce the main output file (e.g., `plan.md`).
 
-### Chinese Variant (`_zh` file)
+### Translated Language Variant
 
-When `chinese_plan=true` is set in `.humanize/config.json`, a `_zh` variant of the output file is also written after the main file. The `_zh` filename is constructed by inserting `_zh` immediately before the file extension:
+When `alternative_plan_language` is set to a supported language name in `.humanize/config.json`, a translated variant of the output file is also written after the main file. The variant filename is constructed by inserting `_<code>` (the ISO 639-1 code from the built-in mapping table) immediately before the file extension:
 
-- `plan.md` becomes `plan_zh.md`
-- `docs/my-plan.md` becomes `docs/my-plan_zh.md`
-- `output` (no extension) becomes `output_zh`
+- `plan.md` becomes `plan_<code>.md` (e.g. `plan_zh.md` for Chinese, `plan_ko.md` for Korean)
+- `docs/my-plan.md` becomes `docs/my-plan_<code>.md`
+- `output` (no extension) becomes `output_<code>`
 
-The `_zh` file contains a full Chinese translation of the English plan. All identifiers (`AC-*`, task IDs, file paths, API names, command flags) remain unchanged, as they are language-neutral.
+The translated variant file contains a full translation of the main plan file's current content in the configured language. All identifiers (`AC-*`, task IDs, file paths, API names, command flags) remain unchanged, as they are language-neutral.
 
-When `chinese_plan=false` (the default), or when `.humanize/config.json` does not exist, or when the `chinese_plan` field is absent, the `_zh` file is NOT written. A missing config file is not an error.
+When `alternative_plan_language` is empty, absent, set to `"English"`, or set to an unsupported language, no translated variant is written. If `.humanize/config.json` does not exist at startup, a default config with `alternative_plan_language=""` is created automatically.
 ```
 
 ### Generation Rules
@@ -513,28 +548,30 @@ If multiple languages are detected:
    - Use the Edit tool to apply the translations
 3. If the user declines, leave the document as-is
 
-### Step 4: Write Chinese Variant (Conditional)
+### Step 4: Write Translated Language Variant (Conditional)
 
-If `CHINESE_PLAN_ENABLED=true`, write a `_zh` variant of the output file containing a full Chinese translation of the English plan:
+If `ALT_PLAN_LANGUAGE` is non-empty (translation enabled), write a translated variant of the output file.
 
-**Filename construction rule** - insert `_zh` immediately before the file extension:
-- `plan.md` becomes `plan_zh.md`
-- `docs/my-plan.md` becomes `docs/my-plan_zh.md`
-- `output` (no extension) becomes `output_zh`
+**Language Unification guard**: If the main plan file was unified to `ALT_PLAN_LANGUAGE` in Step 3 (Language Unification), skip this step. Log: `Main plan file is already in <ALT_PLAN_LANGUAGE>; translated variant not needed.`
+
+**Filename construction rule** - insert `_<ALT_PLAN_LANG_CODE>` immediately before the file extension:
+- `plan.md` becomes `plan_<code>.md` (e.g. `plan_zh.md`, `plan_ko.md`)
+- `docs/my-plan.md` becomes `docs/my-plan_<code>.md`
+- `output` (no extension) becomes `output_<code>`
 
 Algorithm:
 1. Find the last `.` in the base filename.
-2. If a `.` is found, insert `_zh` before it: `<stem>_zh.<extension>`.
-3. If no `.` is found (no extension), append `_zh` to the filename: `<filename>_zh`.
-4. The `_zh` file is placed in the same directory as the main output file.
+2. If a `.` is found, insert `_<ALT_PLAN_LANG_CODE>` before it: `<stem>_<code>.<extension>`.
+3. If no `.` is found (no extension), append `_<ALT_PLAN_LANG_CODE>` to the filename: `<filename>_<code>`.
+4. The variant file is placed in the same directory as the main output file.
 
-**Content of the `_zh` file**:
-- Translate the English plan content into Simplified Chinese.
+**Content of the variant file**:
+- Translate the main plan file's current content (after any Language Unification from Step 3) into `ALT_PLAN_LANGUAGE`. For Chinese, default to Simplified Chinese.
 - Section headings, AC labels, task IDs, file paths, API names, and command flags MUST remain unchanged (identifiers are language-neutral).
-- The `_zh` file is a Chinese reading view of the same plan; it must not add new information not present in the main file.
+- The variant file is a translated reading view of the same plan; it must not add new information not present in the main file.
 - The original draft section at the bottom should be kept as-is (not re-translated).
 
-If `CHINESE_PLAN_ENABLED=false` (the default), do NOT create the `_zh` file. The absence of `.humanize/config.json` or the absence of the `chinese_plan` field both imply `CHINESE_PLAN_ENABLED=false`; no error is raised.
+If `ALT_PLAN_LANGUAGE` is empty (the default), do NOT create a translated variant file.
 
 ### Step 5: Optional Direct Work Start
 
