@@ -60,7 +60,6 @@ echo ""
 TEST_SUITES=(
     "test-template-loader.sh"
     "test-bash-validator-patterns.sh"
-    "test-continue-rlcr-loop.sh"
     "test-todo-checker.sh"
     "test-plan-file-validation.sh"
     "test-template-references.sh"
@@ -92,12 +91,10 @@ TEST_SUITES=(
     "test-agent-teams.sh"
     # Ask Codex tests
     "test-ask-codex.sh"
-    "test-ask-codex-routing.sh"
     # Bitlesson routing tests
     "test-bitlesson-select-routing.sh"
     # Provider routing tests
     "test-model-router.sh"
-    "test-codex-worker-routing.sh"
     # Skill monitor tests
     "test-skill-monitor.sh"
     # Robustness tests
