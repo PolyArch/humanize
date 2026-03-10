@@ -177,8 +177,17 @@ get_session_display() {
     local cwd="$3"
     [[ -z "$sid" ]] && return
 
+    # Resolve project dir name for file lookups
+    local proj_dir_name
+    proj_dir_name=$(echo "$cwd" | sed 's|[/.]|-|g')
+
+    # If transcript_path not provided, construct from project dir and session_id
+    if [[ -z "$transcript" || ! -f "$transcript" ]]; then
+        transcript="$HOME/.claude/projects/${proj_dir_name}/${sid}.jsonl"
+    fi
+
     # Try transcript jsonl first (grep is faster than jq for large files)
-    if [[ -n "$transcript" && -f "$transcript" ]]; then
+    if [[ -f "$transcript" ]]; then
         local title
         title=$(grep '"type":"custom-title"' "$transcript" 2>/dev/null | tail -1 | jq -r '.customTitle // empty' 2>/dev/null)
         if [[ -n "$title" ]]; then
@@ -188,8 +197,6 @@ get_session_display() {
     fi
 
     # Fallback: sessions-index.json (for resumed sessions where transcript may differ)
-    local proj_dir_name
-    proj_dir_name=$(echo "$cwd" | sed 's|[/.]|-|g')
     local idx_file="$HOME/.claude/projects/${proj_dir_name}/sessions-index.json"
     if [[ -f "$idx_file" ]]; then
         local title
@@ -332,25 +339,61 @@ RESET="\e[0m"
 TILDE='~'
 CWD_SHORT="${CWD/#$HOME/$TILDE}"
 
-# Line 1: model | context bar | cost @ duration
-printf "%b%s%b | %b | %b\$%s%b @ %s\n" \
-    "$CORAL" "${MODEL:-?}" "$RESET" \
-    "$CONTEXT_BAR" \
-    "$GREEN" "$COST_STR" "$RESET" \
-    "$DURATION_STR"
+# Strip ANSI escape sequences to get visible text length
+strip_ansi() {
+    printf '%b' "$1" | sed 's/\x1b\[[0-9;]*m//g'
+}
 
-# Line 2: cwd [branch] | lines
-printf "%b%s%b [%b%s%b] | lines: %b+%s%b, %b-%s%b\n" \
-    "$CYAN" "${CWD_SHORT:-?}" "$RESET" \
-    "$YELLOW" "$BRANCH" "$RESET" \
-    "$GREEN" "$LINES_ADDED" "$RESET" \
-    "$RED" "$LINES_REMOVED" "$RESET"
+# Build individual fields: colored (F) and plain-text (P) pairs
+F1=$(printf "%b%s%b" "$CORAL" "${MODEL:-?}" "$RESET")
+P1="${MODEL:-?}"
 
-# Line 3: session | fast | rlcr
-printf "%bSession:%b %b%s%b | %bFast:%b %b%s%b | %bRLCR:%b %b%s%b\n" \
-    "$MAGENTA" "$RESET" \
-    "$CYAN" "${SESSION_DISPLAY:-?}" "$RESET" \
-    "$MAGENTA" "$RESET" \
-    "$FAST_COLOR" "$FAST_MODE" "$RESET" \
-    "$MAGENTA" "$RESET" \
-    "$RLCR_COLOR" "$RLCR_STATUS" "$RESET"
+F2="$CONTEXT_BAR"
+P2=$(strip_ansi "$CONTEXT_BAR")
+
+F3=$(printf "%b\$%s%b @ %s" "$GREEN" "$COST_STR" "$RESET" "$DURATION_STR")
+P3=$(printf "\$%s @ %s" "$COST_STR" "$DURATION_STR")
+
+F4=$(printf "%b%s%b [%b%s%b]" "$CYAN" "${CWD_SHORT:-?}" "$RESET" "$YELLOW" "$BRANCH" "$RESET")
+P4=$(printf "%s [%s]" "${CWD_SHORT:-?}" "$BRANCH")
+
+F5=$(printf "lines: %b+%s%b, %b-%s%b" "$GREEN" "$LINES_ADDED" "$RESET" "$RED" "$LINES_REMOVED" "$RESET")
+P5=$(printf "lines: +%s, -%s" "$LINES_ADDED" "$LINES_REMOVED")
+
+F6=$(printf "%bSession:%b %b%s%b" "$MAGENTA" "$RESET" "$CYAN" "${SESSION_DISPLAY:-?}" "$RESET")
+P6=$(printf "Session: %s" "${SESSION_DISPLAY:-?}")
+
+F7=$(printf "%bFast:%b %b%s%b" "$MAGENTA" "$RESET" "$FAST_COLOR" "$FAST_MODE" "$RESET")
+P7=$(printf "Fast: %s" "$FAST_MODE")
+
+F8=$(printf "%bRLCR:%b %b%s%b" "$MAGENTA" "$RESET" "$RLCR_COLOR" "$RLCR_STATUS" "$RESET")
+P8=$(printf "RLCR: %s" "$RLCR_STATUS")
+
+FIELDS=("$F1" "$F2" "$F3" "$F4" "$F5" "$F6" "$F7" "$F8")
+PLAINS=("$P1" "$P2" "$P3" "$P4" "$P5" "$P6" "$P7" "$P8")
+
+# Get terminal width via /dev/tty (stdin is piped, so tput/stty need the real TTY)
+TERM_WIDTH=$(stty size < /dev/tty 2>/dev/null | awk '{print $2}')
+TERM_WIDTH=${TERM_WIDTH:-$(tput cols 2>/dev/tty || echo 80)}
+MAX_WIDTH=$(( TERM_WIDTH * 75 / 100 ))
+
+# Greedily pack fields into lines, wrapping when adding a field exceeds MAX_WIDTH
+SEPARATOR=" | "
+SEP_WIDTH=${#SEPARATOR}
+cur_line=""
+cur_plain=""
+
+for i in "${!FIELDS[@]}"; do
+    if [[ -z "$cur_line" ]]; then
+        cur_line="${FIELDS[$i]}"
+        cur_plain="${PLAINS[$i]}"
+    elif [[ $(( ${#cur_plain} + SEP_WIDTH + ${#PLAINS[$i]} )) -le $MAX_WIDTH ]]; then
+        cur_line="${cur_line}${SEPARATOR}${FIELDS[$i]}"
+        cur_plain="${cur_plain}${SEPARATOR}${PLAINS[$i]}"
+    else
+        printf "%s\n" "$cur_line"
+        cur_line="${FIELDS[$i]}"
+        cur_plain="${PLAINS[$i]}"
+    fi
+done
+[[ -n "$cur_line" ]] && printf "%s\n" "$cur_line"
