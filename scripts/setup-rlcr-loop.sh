@@ -50,6 +50,8 @@ SKIP_IMPL="false"
 SKIP_IMPL_NO_PLAN="false"
 ASK_CODEX_QUESTION="true"
 AGENT_TEAMS="false"
+LOOP_REVIEWER_MODEL="$DEFAULT_LOOP_REVIEWER_MODEL"
+LOOP_REVIEWER_EFFORT="$DEFAULT_LOOP_REVIEWER_EFFORT"
 BITLESSON_ALLOW_EMPTY_NONE="true"
 
 show_help() {
@@ -662,6 +664,21 @@ if [[ ! "$CODEX_EFFORT" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 
+# Validate reviewer model for YAML safety (same rules as codex model)
+if [[ ! "$LOOP_REVIEWER_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: Reviewer model contains invalid characters" >&2
+    echo "  Model: $LOOP_REVIEWER_MODEL" >&2
+    echo "  Only alphanumeric, hyphen, underscore, dot allowed" >&2
+    exit 1
+fi
+
+# Validate reviewer effort value
+if [[ ! "$LOOP_REVIEWER_EFFORT" =~ ^(xhigh|high|medium|low)$ ]]; then
+    echo "Error: Reviewer effort must be one of: xhigh, high, medium, low" >&2
+    echo "  Got: $LOOP_REVIEWER_EFFORT" >&2
+    exit 1
+fi
+
 # ========================================
 # Git Working Tree Clean Check
 # ========================================
@@ -838,6 +855,8 @@ review_started: $INITIAL_REVIEW_STARTED
 ask_codex_question: $ASK_CODEX_QUESTION
 session_id:
 agent_teams: $AGENT_TEAMS
+loop_reviewer_model: $LOOP_REVIEWER_MODEL
+loop_reviewer_effort: $LOOP_REVIEWER_EFFORT
 bitlesson_required: true
 bitlesson_file: $BITLESSON_FILE_REL
 bitlesson_allow_empty_none: $BITLESSON_ALLOW_EMPTY_NONE
@@ -1209,7 +1228,8 @@ Start Branch: $START_BRANCH
 Base Branch: $BASE_BRANCH
 Codex Model: $CODEX_MODEL
 Codex Effort: $CODEX_EFFORT
-Codex Review Effort: high
+Reviewer Model: $LOOP_REVIEWER_MODEL
+Reviewer Effort: $LOOP_REVIEWER_EFFORT
 Codex Timeout: ${CODEX_TIMEOUT}s
 Loop Directory: $LOOP_DIR
 
@@ -1237,7 +1257,8 @@ Base Branch: $BASE_BRANCH
 Max Iterations: $MAX_ITERATIONS
 Codex Model: $CODEX_MODEL
 Codex Effort: $CODEX_EFFORT
-Codex Review Effort: high
+Reviewer Model: $LOOP_REVIEWER_MODEL
+Reviewer Effort: $LOOP_REVIEWER_EFFORT
 Codex Timeout: ${CODEX_TIMEOUT}s
 Full Review Round: $FULL_REVIEW_ROUND (Full Alignment Checks at rounds $((FULL_REVIEW_ROUND - 1)), $((2 * FULL_REVIEW_ROUND - 1)), $((3 * FULL_REVIEW_ROUND - 1)), ...)
 Ask User for Codex Questions: $ASK_CODEX_QUESTION

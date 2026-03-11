@@ -132,6 +132,32 @@ for getting a second opinion, reviewing a design, or asking domain-specific ques
 Responses are saved to `.humanize/skill/<timestamp>/` with `input.md`, `output.md`,
 and `metadata.md` for reference.
 
+## Configuration
+
+Humanize uses a 4-layer config hierarchy (lowest to highest priority):
+1. **Plugin defaults**: `config/default_config.json`
+2. **User config**: `~/.config/humanize/config.json`
+3. **Project config**: `.humanize/config.json`
+4. **CLI flags**: Command-line arguments (where available)
+
+### Reviewer Model Configuration
+
+The RLCR loop reviewer (used for round reviews and code reviews) has dedicated config keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `loop_reviewer_model` | `gpt-5.4` | Model for round reviews and code reviews |
+| `loop_reviewer_effort` | `high` | Reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+
+These are independent from `--codex-model` (which controls the analyzer). To override, add to `.humanize/config.json`:
+
+```json
+{
+  "loop_reviewer_model": "gpt-5.2",
+  "loop_reviewer_effort": "xhigh"
+}
+```
+
 ## Monitoring
 
 Set up the monitoring helper for real-time progress tracking:
