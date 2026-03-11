@@ -518,13 +518,11 @@ PLAN_EOF
         pass "setup execution: state.md was created"
 
         # Verify codex_model from --codex-model flag
-        codex_model=$(grep '^codex_model:' "$STATE_FILE" | sed 's/codex_model: *//')
         assert_eq "setup execution: --codex-model set codex_model (gpt-5.3)" \
-            "gpt-5.3" "$codex_model"
+            "gpt-5.3" "$(grep '^codex_model:' "$STATE_FILE" | sed 's/codex_model: *//')"
 
-        codex_effort=$(grep '^codex_effort:' "$STATE_FILE" | sed 's/codex_effort: *//')
         assert_eq "setup execution: --codex-model set codex_effort (xhigh)" \
-            "xhigh" "$codex_effort"
+            "xhigh" "$(grep '^codex_effort:' "$STATE_FILE" | sed 's/codex_effort: *//')"
 
         assert_no_grep "setup execution: state.md does not contain loop_reviewer fields" \
             'loop_reviewer' "$STATE_FILE"
