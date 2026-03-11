@@ -171,12 +171,10 @@ $_lc_pipefail && set -o pipefail || set +o pipefail
 unset _lc_errexit _lc_nounset _lc_pipefail
 
 _LOOP_COMMON_PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-# Config loading is best-effort: callers like setup-rlcr-loop.sh have their own
-# authoritative dependency checks (jq, codex) that produce clear error messages.
-# Suppress stderr to avoid noisy intermediate errors (e.g., "jq: command not found")
-# before the caller's check runs, and use || true so a config-load failure does not
-# abort sourcing before those checks are reached.
-_LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT" 2>/dev/null)" || true
+# Config loading is best-effort: use || true so a config-load failure does not
+# abort sourcing before callers' dependency checks (jq, codex) are reached.
+# Stderr is NOT suppressed so malformed config warnings remain visible.
+_LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT")" || true
 
 # Load bitlesson model from merged config (controls which CLI bitlesson-select.sh uses)
 DEFAULT_BITLESSON_MODEL="$(get_config_value "$_LOOP_COMMON_CONFIG" "bitlesson_model" 2>/dev/null || true)"
