@@ -581,11 +581,14 @@ if [[ "$GIT_IS_REPO" == "true" ]]; then
     GIT_ISSUES=""
     SPECIAL_NOTES=""
 
-    # Check for uncommitted changes (staged or unstaged) using cached status
-    if [[ -n "$GIT_STATUS_CACHED" ]]; then
+    # Check for uncommitted changes (staged or unstaged) using cached status.
+    # Exclude .humanize/ untracked files from the dirty determination because
+    # plugin state (bitlesson.md, config.json, rlcr/) is intentionally untracked.
+    GIT_STATUS_FOR_BLOCK=$(echo "$GIT_STATUS_CACHED" | grep -vE '^\?\? \.humanize' || true)
+    if [[ -n "$GIT_STATUS_FOR_BLOCK" ]]; then
         GIT_ISSUES="uncommitted changes"
 
-        # Check for special cases in untracked files
+        # Check for special cases in untracked files (use original status for notes)
         UNTRACKED=$(echo "$GIT_STATUS_CACHED" | grep '^??' || true)
 
         # Check if .humanize* directories are untracked (includes .humanize/ and any legacy .humanize-* dirs)
