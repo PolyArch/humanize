@@ -33,7 +33,7 @@ OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
   --max <N>              Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default: gpt-5.4:high)
+                         Codex model and reasoning effort (default from config, fallback gpt-5.4:high)
   --codex-timeout <SECONDS>
                          Timeout for each Codex review in seconds (default: 5400)
   --track-plan-file      Indicate plan file should be tracked in git (must be clean)

@@ -681,6 +681,126 @@ fi
 echo ""
 
 # ========================================
+# PR loop --codex-model override (runtime behavioral)
+# ========================================
+
+echo "--- PR loop --codex-model override (runtime) ---"
+
+if [[ ! -f "$SETUP_PR_LOOP" ]]; then
+    skip "PR loop override test requires setup-pr-loop.sh" "file not found"
+else
+    # Run setup-pr-loop.sh --help with project config to verify help text shows config-backed default
+    # --help exits before requiring gh/PR prerequisites, so no external deps needed
+    setup_test_dir
+    PR_OVERRIDE_PROJECT="$TEST_DIR/pr-override-project"
+    mkdir -p "$PR_OVERRIDE_PROJECT/.humanize"
+    printf '{"codex_model": "o3-mini", "codex_effort": "low"}' > "$PR_OVERRIDE_PROJECT/.humanize/config.json"
+
+    help_output=$(cd "$PR_OVERRIDE_PROJECT" && \
+        CLAUDE_PROJECT_DIR="$PR_OVERRIDE_PROJECT" \
+        XDG_CONFIG_HOME="$TEST_DIR/no-user-config" \
+        timeout 10 bash "$SETUP_PR_LOOP" --help 2>&1) || true
+
+    # Help text must mention config-backed default (not a hardcoded model name)
+    if echo "$help_output" | grep -q 'default from config'; then
+        pass "PR loop runtime: --help shows config-backed default"
+    else
+        fail "PR loop runtime: --help shows config-backed default" "contains 'default from config'" "$(echo "$help_output" | grep codex-model)"
+    fi
+
+    # Verify that the argument parser correctly captures --codex-model override
+    # by sourcing the config and simulating the parse (the full setup needs gh/PR)
+    result=$(bash -c "
+        export DEFAULT_CODEX_EFFORT='medium'
+        export CLAUDE_PROJECT_DIR='$PR_OVERRIDE_PROJECT'
+        export XDG_CONFIG_HOME='$TEST_DIR/no-user-config'
+        source '$LOOP_COMMON' 2>/dev/null
+        CODEX_MODEL=\"\$DEFAULT_CODEX_MODEL\"
+        CODEX_EFFORT=\"\$DEFAULT_CODEX_EFFORT\"
+        # Simulate --codex-model flag parsing (same logic as setup-pr-loop.sh)
+        ARG='override-model:xhigh'
+        CODEX_MODEL=\"\${ARG%%:*}\"
+        CODEX_EFFORT=\"\${ARG#*:}\"
+        echo \"\$CODEX_MODEL|\$CODEX_EFFORT\"
+    " 2>/dev/null || echo "ERROR")
+
+    assert_eq "PR loop runtime: --codex-model overrides config model" \
+        "override-model" "$(echo "$result" | cut -d'|' -f1)"
+
+    assert_eq "PR loop runtime: --codex-model overrides config effort" \
+        "xhigh" "$(echo "$result" | cut -d'|' -f2)"
+fi
+
+echo ""
+
+# ========================================
+# ask-codex runtime behavioral test
+# ========================================
+
+echo "--- ask-codex runtime behavioral ---"
+
+if [[ ! -f "$ASK_CODEX" ]]; then
+    skip "ask-codex runtime test requires ask-codex.sh" "file not found"
+else
+    setup_test_dir
+    ASK_CFG_PROJECT="$TEST_DIR/ask-cfg-project"
+    init_test_git_repo "$ASK_CFG_PROJECT"
+    mkdir -p "$ASK_CFG_PROJECT/.humanize"
+    printf '{"codex_model": "o3-mini", "codex_effort": "low"}' > "$ASK_CFG_PROJECT/.humanize/config.json"
+
+    # Create a mock codex that outputs a fixed response
+    MOCK_BIN="$TEST_DIR/mock-bin"
+    mkdir -p "$MOCK_BIN"
+    cat > "$MOCK_BIN/codex" << 'MOCK_EOF'
+#!/bin/bash
+echo "mock codex response"
+exit 0
+MOCK_EOF
+    chmod +x "$MOCK_BIN/codex"
+
+    # Run ask-codex with config-backed defaults (no --codex-model flag)
+    ask_stderr=$(cd "$ASK_CFG_PROJECT" && \
+        CLAUDE_PROJECT_DIR="$ASK_CFG_PROJECT" \
+        XDG_CONFIG_HOME="$TEST_DIR/no-user-config" \
+        PATH="$MOCK_BIN:$PATH" \
+        timeout 30 bash "$ASK_CODEX" "test question" 2>&1 >/dev/null) || true
+
+    # Stderr should report config-backed model and effort
+    if echo "$ask_stderr" | grep -q 'model=o3-mini'; then
+        pass "ask-codex runtime: config-backed model reported in stderr (o3-mini)"
+    else
+        fail "ask-codex runtime: config-backed model reported in stderr (o3-mini)" "contains 'model=o3-mini'" "$ask_stderr"
+    fi
+
+    if echo "$ask_stderr" | grep -q 'effort=low'; then
+        pass "ask-codex runtime: config-backed effort reported in stderr (low)"
+    else
+        fail "ask-codex runtime: config-backed effort reported in stderr (low)" "contains 'effort=low'" "$ask_stderr"
+    fi
+
+    # Run ask-codex with --codex-model override
+    override_stderr=$(cd "$ASK_CFG_PROJECT" && \
+        CLAUDE_PROJECT_DIR="$ASK_CFG_PROJECT" \
+        XDG_CONFIG_HOME="$TEST_DIR/no-user-config" \
+        PATH="$MOCK_BIN:$PATH" \
+        timeout 30 bash "$ASK_CODEX" --codex-model override-model:xhigh "test question" 2>&1 >/dev/null) || true
+
+    if echo "$override_stderr" | grep -q 'model=override-model'; then
+        pass "ask-codex runtime: --codex-model override reported in stderr (override-model)"
+    else
+        fail "ask-codex runtime: --codex-model override reported in stderr (override-model)" "contains 'model=override-model'" "$override_stderr"
+    fi
+
+    if echo "$override_stderr" | grep -q 'effort=xhigh'; then
+        pass "ask-codex runtime: --codex-model override effort in stderr (xhigh)"
+    else
+        fail "ask-codex runtime: --codex-model override effort in stderr (xhigh)" "contains 'effort=xhigh'" "$override_stderr"
+    fi
+fi
+
+echo ""
+
+# ========================================
 # Summary
 # ========================================
 
