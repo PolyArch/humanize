@@ -809,13 +809,76 @@ echo "--- AC-7 Extended: Stop-hook rejects non-enum effort from edited state ---
 STOP_HOOK="$PROJECT_ROOT/hooks/loop-codex-stop-hook.sh"
 
 if [[ ! -f "$STOP_HOOK" ]]; then
-    skip "stop-hook effort enum test requires stop hook" "file not found"
+    skip "stop-hook behavioral effort test requires stop hook" "file not found"
+elif ! command -v jq >/dev/null 2>&1; then
+    skip "stop-hook behavioral effort test requires jq" "jq not found"
 else
-    # Verify the stop hook source contains the enum validation pattern
-    if grep -q '\^(xhigh|high|medium|low)\$' "$STOP_HOOK"; then
-        pass "stop-hook effort enum: hook source contains enum validation"
+    setup_test_dir
+    HOOK_PROJECT="$TEST_DIR/hook-project"
+    mkdir -p "$HOOK_PROJECT/.humanize/rlcr/2099-01-01_00-00-00"
+
+    # Create state.md with invalid reviewer effort
+    cat > "$HOOK_PROJECT/.humanize/rlcr/2099-01-01_00-00-00/state.md" << 'HOOK_STATE_EOF'
+---
+current_round: 1
+max_iterations: 10
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 3600
+push_every_round: false
+full_review_round: 5
+plan_file: plan.md
+plan_tracked: false
+start_branch: main
+base_branch: main
+base_commit: abc123
+review_started: false
+ask_codex_question: false
+session_id: hook-test
+agent_teams: false
+loop_reviewer_model: gpt-5.4
+loop_reviewer_effort: superhigh
+---
+HOOK_STATE_EOF
+
+    # Create a stub codex that records invocations (should never be called)
+    STUB_BIN="$TEST_DIR/stub-bin"
+    mkdir -p "$STUB_BIN"
+    cat > "$STUB_BIN/codex" << 'STUB_EOF'
+#!/bin/bash
+echo "CODEX_INVOKED" >> "$CODEX_INVOCATION_LOG"
+exit 0
+STUB_EOF
+    chmod +x "$STUB_BIN/codex"
+
+    CODEX_LOG="$TEST_DIR/codex-invocations.log"
+
+    # Run the stop hook with the invalid state, feeding it minimal JSON hook input
+    hook_stderr=$(echo '{"session_id":"hook-test"}' | \
+        CLAUDE_PROJECT_DIR="$HOOK_PROJECT" \
+        CODEX_INVOCATION_LOG="$CODEX_LOG" \
+        PATH="$STUB_BIN:$PATH" \
+        bash "$STOP_HOOK" 2>&1 >/dev/null) || true
+
+    # Assert: hook reported the invalid effort error
+    if echo "$hook_stderr" | grep -q "Invalid reviewer effort"; then
+        pass "stop-hook behavioral: rejects 'superhigh' effort with error message"
     else
-        fail "stop-hook effort enum: hook source contains enum validation" "enum pattern present" "not found"
+        fail "stop-hook behavioral: rejects 'superhigh' effort with error message" "contains 'Invalid reviewer effort'" "$hook_stderr"
+    fi
+
+    # Assert: codex stub was never invoked
+    if [[ ! -f "$CODEX_LOG" ]]; then
+        pass "stop-hook behavioral: codex was not invoked for invalid effort"
+    else
+        fail "stop-hook behavioral: codex was not invoked for invalid effort" "no invocation log" "codex was called"
+    fi
+
+    # Assert: state.md was renamed to unexpected-state.md (end_loop was called)
+    if [[ -f "$HOOK_PROJECT/.humanize/rlcr/2099-01-01_00-00-00/unexpected-state.md" ]]; then
+        pass "stop-hook behavioral: end_loop renamed state to unexpected-state.md"
+    else
+        fail "stop-hook behavioral: end_loop renamed state to unexpected-state.md"
     fi
 fi
 
@@ -862,7 +925,15 @@ PLAN_EOF
     # --base-branch avoids remote detection; --track-plan-file avoids gitignore requirement
     # CLAUDE_PROJECT_DIR must point at the temp repo to prevent the setup script
     # from detecting the live RLCR session in the real workspace
-    output=$(cd "$EXEC_PROJECT" && CLAUDE_PROJECT_DIR="$EXEC_PROJECT" timeout 30 bash "$SETUP_SCRIPT" --codex-model gpt-5.3:xhigh --base-branch master --track-plan-file plan.md 2>&1) || true
+    setup_exit=0
+    output=$(cd "$EXEC_PROJECT" && CLAUDE_PROJECT_DIR="$EXEC_PROJECT" timeout 30 bash "$SETUP_SCRIPT" --codex-model gpt-5.3:xhigh --base-branch master --track-plan-file plan.md 2>&1) || setup_exit=$?
+
+    # Assert setup completed successfully before checking state contents
+    if [[ "$setup_exit" -eq 0 ]]; then
+        pass "setup execution: setup-rlcr-loop.sh exited successfully"
+    else
+        fail "setup execution: setup-rlcr-loop.sh exited successfully" "exit 0" "exit $setup_exit"
+    fi
 
     # Find the generated state.md (|| true prevents set -e abort when no match)
     STATE_FILE=$(find "$EXEC_PROJECT/.humanize/rlcr" -name "state.md" 2>/dev/null | head -1 || true)
