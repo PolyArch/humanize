@@ -290,6 +290,137 @@ This file intentionally omits required sections.
 EOF
 }
 
+make_plan_with_sections_only_in_fence() {
+    local output_file="$1"
+    cat > "$output_file" <<'EOF'
+# Refine Plan Fixture
+
+CMT: keep the validator path reachable ENDCMT
+
+```markdown
+## Goal Description
+Hidden inside a code fence.
+
+## Acceptance Criteria
+- AC-1: Hidden inside a code fence.
+
+## Path Boundaries
+Hidden inside a code fence.
+
+## Feasibility Hints and Suggestions
+Hidden inside a code fence.
+
+## Dependencies and Sequence
+1. Hidden inside a code fence.
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| hidden | AC-1 | coding | - |
+
+## Claude-Codex Deliberation
+### Convergence Status
+partially_converged
+
+## Pending User Decisions
+Hidden inside a code fence.
+
+## Implementation Notes
+Hidden inside a code fence.
+```
+EOF
+}
+
+make_plan_with_sections_only_in_html_comment() {
+    local output_file="$1"
+    cat > "$output_file" <<'EOF'
+# Refine Plan Fixture
+
+CMT: keep the validator path reachable ENDCMT
+
+<!--
+## Goal Description
+Hidden inside an HTML comment.
+
+## Acceptance Criteria
+- AC-1: Hidden inside an HTML comment.
+
+## Path Boundaries
+Hidden inside an HTML comment.
+
+## Feasibility Hints and Suggestions
+Hidden inside an HTML comment.
+
+## Dependencies and Sequence
+1. Hidden inside an HTML comment.
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| hidden | AC-1 | coding | - |
+
+## Claude-Codex Deliberation
+### Convergence Status
+partially_converged
+
+## Pending User Decisions
+Hidden inside an HTML comment.
+
+## Implementation Notes
+Hidden inside an HTML comment.
+-->
+EOF
+}
+
+make_plan_with_real_and_ignored_sections() {
+    local output_file="$1"
+    cat > "$output_file" <<'EOF'
+# Refine Plan Fixture
+
+<!--
+## Goal Description
+Ignored duplicate heading inside HTML comment.
+-->
+
+```markdown
+## Acceptance Criteria
+- AC-1: Ignored duplicate heading inside code fence.
+```
+
+## Goal Description
+Refine the generated plan while keeping plan-only scope. CMT: clarify the scope boundary ENDCMT
+
+## Acceptance Criteria
+- AC-1: A refined plan is produced.
+
+## Path Boundaries
+Keep refinement inside plan artifacts only.
+
+## Feasibility Hints and Suggestions
+Reuse config-loader semantics and keep writes atomic.
+
+## Dependencies and Sequence
+1. Validate
+2. Extract comments
+3. Write outputs
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| task1 | AC-1 | coding | - |
+
+## Claude-Codex Deliberation
+### Convergence Status
+partially_converged
+
+## Pending User Decisions
+None.
+
+## Implementation Notes
+Remove all reviewer comments from the refined plan.
+EOF
+}
+
 REFERENCE_COMMENT_COUNT=0
 REFERENCE_CLEANED_PLAN=""
 
@@ -1017,6 +1148,12 @@ else
     fail "validate-refine-plan-io: unterminated CMT blocks report missing ENDCMT" "missing ENDCMT" "$VALIDATOR_OUTPUT"
 fi
 
+if echo "$VALIDATOR_OUTPUT" | grep -q 'context: "CMT: this block never closes"'; then
+    pass "validate-refine-plan-io: unterminated CMT blocks include the opening-line context excerpt"
+else
+    fail "validate-refine-plan-io: unterminated CMT blocks include the opening-line context excerpt" 'context: "CMT: this block never closes"' "$VALIDATOR_OUTPUT"
+fi
+
 NESTED_COMMENT_PLAN="$TEST_FIXTURES_DIR/nested-comment-plan.md"
 make_plan_with_goal_body "$NESTED_COMMENT_PLAN" "CMT: outer CMT: inner ENDCMT"
 run_validator_capture --input "$NESTED_COMMENT_PLAN"
@@ -1041,6 +1178,24 @@ else
     fail "validate-refine-plan-io: input missing required sections exits 4" "4" "$VALIDATOR_EXIT_CODE"
 fi
 
+FENCE_SECTION_PLAN="$TEST_FIXTURES_DIR/fence-sections-plan.md"
+make_plan_with_sections_only_in_fence "$FENCE_SECTION_PLAN"
+run_validator_capture --input "$FENCE_SECTION_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 4 ]]; then
+    pass "validate-refine-plan-io: required sections inside code fences do not satisfy section checks"
+else
+    fail "validate-refine-plan-io: required sections inside code fences do not satisfy section checks" "4" "$VALIDATOR_EXIT_CODE"
+fi
+
+HTML_SECTION_PLAN="$TEST_FIXTURES_DIR/html-sections-plan.md"
+make_plan_with_sections_only_in_html_comment "$HTML_SECTION_PLAN"
+run_validator_capture --input "$HTML_SECTION_PLAN"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 4 ]]; then
+    pass "validate-refine-plan-io: required sections inside HTML comments do not satisfy section checks"
+else
+    fail "validate-refine-plan-io: required sections inside HTML comments do not satisfy section checks" "4" "$VALIDATOR_EXIT_CODE"
+fi
+
 VALID_PLAN="$TEST_FIXTURES_DIR/valid-plan.md"
 make_valid_annotated_plan "$VALID_PLAN"
 run_validator_capture --input "$VALID_PLAN" --output "$TEST_FIXTURES_DIR/missing-dir/refined.md"
@@ -1048,6 +1203,16 @@ if [[ "$VALIDATOR_EXIT_CODE" -eq 5 ]]; then
     pass "validate-refine-plan-io: missing output directory exits 5"
 else
     fail "validate-refine-plan-io: missing output directory exits 5" "5" "$VALIDATOR_EXIT_CODE"
+fi
+
+REAL_AND_IGNORED_PLAN="$TEST_FIXTURES_DIR/real-and-ignored-sections-plan.md"
+make_plan_with_real_and_ignored_sections "$REAL_AND_IGNORED_PLAN"
+REAL_AND_IGNORED_QA_DIR="$TEST_FIXTURES_DIR/real-and-ignored-qa"
+run_validator_capture --input "$REAL_AND_IGNORED_PLAN" --qa-dir "$REAL_AND_IGNORED_QA_DIR"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 0 ]]; then
+    pass "validate-refine-plan-io: real sections outside ignored regions still pass validation"
+else
+    fail "validate-refine-plan-io: real sections outside ignored regions still pass validation" "0" "$VALIDATOR_EXIT_CODE"
 fi
 
 BROKEN_QA_PATH="$TEST_FIXTURES_DIR/not-a-dir"

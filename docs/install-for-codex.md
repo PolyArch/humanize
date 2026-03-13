@@ -43,6 +43,9 @@ Runtime dependencies in `humanize/`:
 - `scripts/`
 - `hooks/`
 - `prompt-template/`
+- `templates/`
+- `config/`
+- `agents/`
 
 Installed files/directories:
 - `${CODEX_HOME:-~/.codex}/skills/humanize/SKILL.md`
@@ -52,6 +55,9 @@ Installed files/directories:
 - `${CODEX_HOME:-~/.codex}/skills/humanize/scripts/`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/hooks/`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/prompt-template/`
+- `${CODEX_HOME:-~/.codex}/skills/humanize/templates/`
+- `${CODEX_HOME:-~/.codex}/skills/humanize/config/`
+- `${CODEX_HOME:-~/.codex}/skills/humanize/agents/`
 
 ## Optional: Install for Both Codex and Kimi
 

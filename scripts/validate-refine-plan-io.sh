@@ -69,6 +69,7 @@ scan_cmt_blocks() {
         cmt_open_line = 0
         cmt_open_col = 0
         cmt_open_heading = "Preamble"
+        cmt_open_excerpt = ""
         cmt_has_text = 0
         fatal = 0
         fatal_code = 0
@@ -177,6 +178,7 @@ scan_cmt_blocks() {
                 cmt_open_line = 0
                 cmt_open_col = 0
                 cmt_open_heading = "Preamble"
+                cmt_open_excerpt = ""
                 pos += token_rel + 5
                 continue
             }
@@ -216,6 +218,7 @@ scan_cmt_blocks() {
                 cmt_open_line = NR
                 cmt_open_col = pos + token_rel - 1
                 cmt_open_heading = current_heading()
+                cmt_open_excerpt = context_excerpt(line, cmt_open_col)
                 pos += token_rel + 3
                 continue
             }
@@ -230,11 +233,141 @@ scan_cmt_blocks() {
         }
 
         if (in_cmt) {
-            printf "Comment parse error: missing ENDCMT for block opened at line %d, column %d near \"%s\"\n", cmt_open_line, cmt_open_col, cmt_open_heading > "/dev/stderr"
+            printf "Comment parse error: missing ENDCMT for block opened at line %d, column %d near \"%s\" (context: \"%s\")\n", cmt_open_line, cmt_open_col, cmt_open_heading, cmt_open_excerpt > "/dev/stderr"
             exit 2
         }
 
         print count
+    }
+    ' "$input_file"
+}
+
+scan_sections() {
+    local input_file="$1"
+
+    awk '
+    function trim(value) {
+        sub(/^[[:space:]]+/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+        return value
+    }
+
+    BEGIN {
+        in_fence = 0
+        in_html = 0
+        in_cmt = 0
+        fence_marker = ""
+    }
+
+    {
+        line = $0
+        visible = ""
+
+        if (in_fence) {
+            if ((fence_marker == "```" && line ~ /^[[:space:]]*```/) || (fence_marker == "~~~" && line ~ /^[[:space:]]*~~~/)) {
+                in_fence = 0
+                fence_marker = ""
+            }
+            next
+        }
+
+        if (!in_html && !in_cmt) {
+            if (line ~ /^[[:space:]]*```/) {
+                in_fence = 1
+                fence_marker = "```"
+                next
+            }
+            if (line ~ /^[[:space:]]*~~~/) {
+                in_fence = 1
+                fence_marker = "~~~"
+                next
+            }
+        }
+
+        pos = 1
+        line_length = length(line)
+        while (pos <= line_length) {
+            rest = substr(line, pos)
+
+            if (in_html) {
+                close_rel = index(rest, "-->")
+
+                if (close_rel > 0) {
+                    pos += close_rel + 2
+                    in_html = 0
+                    continue
+                }
+
+                pos = line_length + 1
+                break
+            }
+
+            if (in_cmt) {
+                html_rel = index(rest, "<!--")
+                end_rel = index(rest, "ENDCMT")
+                token_rel = 0
+                token_type = ""
+
+                if (html_rel > 0) {
+                    token_rel = html_rel
+                    token_type = "html"
+                }
+                if (end_rel > 0 && (token_rel == 0 || end_rel < token_rel)) {
+                    token_rel = end_rel
+                    token_type = "end"
+                }
+
+                if (token_rel == 0) {
+                    pos = line_length + 1
+                    break
+                }
+
+                if (token_type == "html") {
+                    in_html = 1
+                    pos += token_rel + 3
+                    continue
+                }
+
+                in_cmt = 0
+                pos += token_rel + 5
+                continue
+            }
+
+            html_rel = index(rest, "<!--")
+            cmt_rel = index(rest, "CMT:")
+            token_rel = 0
+            token_type = ""
+
+            if (html_rel > 0) {
+                token_rel = html_rel
+                token_type = "html"
+            }
+            if (cmt_rel > 0 && (token_rel == 0 || cmt_rel < token_rel)) {
+                token_rel = cmt_rel
+                token_type = "cmt"
+            }
+
+            if (token_rel == 0) {
+                visible = visible rest
+                break
+            }
+
+            visible = visible substr(rest, 1, token_rel - 1)
+
+            if (token_type == "html") {
+                in_html = 1
+                pos += token_rel + 3
+                continue
+            }
+
+            in_cmt = 1
+            pos += token_rel + 3
+        }
+
+        visible = trim(visible)
+        if (visible ~ /^#[#]*[[:space:]]+/) {
+            print visible
+        }
     }
     ' "$input_file"
 }
@@ -377,9 +510,10 @@ REQUIRED_SECTIONS=(
     "## Implementation Notes"
 )
 
+SCANNED_SECTIONS="$(scan_sections "$INPUT_FILE")"
 MISSING_SECTIONS=()
 for section in "${REQUIRED_SECTIONS[@]}"; do
-    if ! grep -qF "$section" "$INPUT_FILE"; then
+    if ! printf '%s\n' "$SCANNED_SECTIONS" | grep -qF -- "$section"; then
         MISSING_SECTIONS+=("$section")
     fi
 done

@@ -54,9 +54,13 @@ cp -r skills/humanize-refine-plan ~/.config/agents/skills/
 cp -r skills/humanize-rlcr ~/.config/agents/skills/
 
 # Copy runtime dependencies used by the skills
+# (must match install-skill.sh's install_runtime_bundle)
 cp -r scripts ~/.config/agents/skills/humanize/
 cp -r hooks ~/.config/agents/skills/humanize/
 cp -r prompt-template ~/.config/agents/skills/humanize/
+cp -r templates ~/.config/agents/skills/humanize/
+cp -r config ~/.config/agents/skills/humanize/
+cp -r agents ~/.config/agents/skills/humanize/
 
 # Hydrate runtime root placeholders inside SKILL.md files
 for skill in humanize humanize-gen-plan humanize-refine-plan humanize-rlcr; do
