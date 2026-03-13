@@ -23,7 +23,7 @@ Or use the unified installer directly:
 ```
 
 This will:
-- Sync `humanize`, `humanize-gen-plan`, and `humanize-rlcr` into `${CODEX_HOME:-~/.codex}/skills`
+- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, and `humanize-rlcr` into `${CODEX_HOME:-~/.codex}/skills`
 - Copy runtime dependencies into `${CODEX_HOME:-~/.codex}/skills/humanize`
 - Use RLCR defaults: `codex exec` with `gpt-5.4:high`, `codex review` with `gpt-5.4:high`
 
@@ -36,6 +36,7 @@ ls -la "${CODEX_HOME:-$HOME/.codex}/skills"
 Expected directories:
 - `humanize`
 - `humanize-gen-plan`
+- `humanize-refine-plan`
 - `humanize-rlcr`
 
 Runtime dependencies in `humanize/`:
@@ -46,6 +47,7 @@ Runtime dependencies in `humanize/`:
 Installed files/directories:
 - `${CODEX_HOME:-~/.codex}/skills/humanize/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize-gen-plan/SKILL.md`
+- `${CODEX_HOME:-~/.codex}/skills/humanize-refine-plan/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize-rlcr/SKILL.md`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/scripts/`
 - `${CODEX_HOME:-~/.codex}/skills/humanize/hooks/`

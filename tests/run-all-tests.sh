@@ -79,6 +79,7 @@ TEST_SUITES=(
     "test-monitor-e2e-deletion.sh"
     "test-monitor-e2e-sigint.sh"
     "test-gen-plan.sh"
+    "test-refine-plan.sh"
     "test-task-tag-routing.sh"
     "test-config-merge.sh"
     "test-config-error-handling.sh"

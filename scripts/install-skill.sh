@@ -33,6 +33,7 @@ DRY_RUN="false"
 SKILL_NAMES=(
     "humanize"
     "humanize-gen-plan"
+    "humanize-refine-plan"
     "humanize-rlcr"
 )
 

@@ -4,12 +4,13 @@ This guide explains how to install the Humanize skills for [Kimi Code CLI](https
 
 ## Overview
 
-Humanize provides three Agent Skills for kimi:
+Humanize provides four Agent Skills for kimi:
 
 | Skill | Type | Purpose |
 |-------|------|---------|
 | `humanize` | Standard | General guidance for all workflows |
 | `humanize-gen-plan` | Flow | Generate structured plan from draft |
+| `humanize-refine-plan` | Flow | Refine annotated plan with CMT blocks |
 | `humanize-rlcr` | Flow | Iterative development with Codex review |
 
 ## Installation
@@ -23,7 +24,7 @@ From the Humanize repo root, run:
 ```
 
 This command will:
-- Sync `humanize`, `humanize-gen-plan`, and `humanize-rlcr` into `~/.config/agents/skills`
+- Sync `humanize`, `humanize-gen-plan`, `humanize-refine-plan`, and `humanize-rlcr` into `~/.config/agents/skills`
 - Copy runtime dependencies into `~/.config/agents/skills/humanize`
 
 Common installer script (all targets):
@@ -46,9 +47,10 @@ cd /path/to/humanize
 # Create the skills directory if it doesn't exist
 mkdir -p ~/.config/agents/skills
 
-# Copy all three skills
+# Copy all four skills
 cp -r skills/humanize ~/.config/agents/skills/
 cp -r skills/humanize-gen-plan ~/.config/agents/skills/
+cp -r skills/humanize-refine-plan ~/.config/agents/skills/
 cp -r skills/humanize-rlcr ~/.config/agents/skills/
 
 # Copy runtime dependencies used by the skills
@@ -57,7 +59,7 @@ cp -r hooks ~/.config/agents/skills/humanize/
 cp -r prompt-template ~/.config/agents/skills/humanize/
 
 # Hydrate runtime root placeholders inside SKILL.md files
-for skill in humanize humanize-gen-plan humanize-rlcr; do
+for skill in humanize humanize-gen-plan humanize-refine-plan humanize-rlcr; do
   sed -i.bak "s|{{HUMANIZE_RUNTIME_ROOT}}|$HOME/.config/agents/skills/humanize|g" \
     "$HOME/.config/agents/skills/$skill/SKILL.md"
 done
@@ -72,6 +74,7 @@ ls -la ~/.config/agents/skills/
 # Should show:
 # humanize/
 # humanize-gen-plan/
+# humanize-refine-plan/
 # humanize-rlcr/
 ```
 
