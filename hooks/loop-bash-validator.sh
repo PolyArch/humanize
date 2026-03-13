@@ -81,9 +81,8 @@ if [[ -z "$_MA_BASH_DIR" ]] || [[ ! -f "$_MA_BASH_DIR/methodology-analysis-state
 fi
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
-    # Allow only gh issue commands (for optional feedback issue creation)
-    # Block other gh subcommands (pr checkout, repo clone, api, etc.)
-    if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]]+issue[[:space:]] ]]; then
+    # Allow cancel-rlcr-loop.sh (user must be able to cancel during this phase)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])([^[:space:]]*/)?cancel-rlcr-loop\.sh'; then
         exit 0
     fi
     # Block git commands that modify the working tree

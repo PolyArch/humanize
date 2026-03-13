@@ -339,6 +339,12 @@ find_active_loop() {
 # This ensures spawned agents (which have different session_ids) always bind to
 # the correct originating loop during methodology analysis.
 #
+# Limitation: If two loops are simultaneously in methodology analysis, this
+# returns the newest one. The older session's spawned agents would bind to the
+# wrong loop. This is accepted because concurrent methodology analyses are
+# extremely unlikely (the phase is short-lived and requires two active RLCR
+# sessions to overlap at this specific point).
+#
 # Args:
 #   $1 - loop_base_dir: path to .humanize/rlcr
 #
