@@ -114,7 +114,12 @@ if [[ -z "$_MA_LOOP_DIR" ]]; then
 fi
 
 if [[ -n "$_MA_LOOP_DIR" ]] && [[ -f "$_MA_LOOP_DIR/methodology-analysis-state.md" ]]; then
+    # If realpath fails (file doesn't exist yet on BSD/macOS), resolve parent dir
     _ma_real_path=$(realpath "$FILE_PATH" 2>/dev/null || echo "")
+    if [[ -z "$_ma_real_path" ]]; then
+        _ma_parent=$(realpath "$(dirname "$FILE_PATH")" 2>/dev/null || echo "")
+        [[ -n "$_ma_parent" ]] && _ma_real_path="$_ma_parent/$(basename "$FILE_PATH")"
+    fi
     _ma_real_loop=$(realpath "$_MA_LOOP_DIR" 2>/dev/null || echo "")
     if [[ -n "$_ma_real_path" ]] && [[ -n "$_ma_real_loop" ]] && \
        [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then

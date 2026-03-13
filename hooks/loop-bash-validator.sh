@@ -78,8 +78,9 @@ if [[ -z "$_MA_BASH_DIR" ]]; then
 fi
 
 if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.md" ]]; then
-    # Allow gh commands for issue creation
-    if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]] ]]; then
+    # Allow only gh issue commands (for optional feedback issue creation)
+    # Block other gh subcommands (pr checkout, repo clone, api, etc.)
+    if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]]+issue[[:space:]] ]]; then
         exit 0
     fi
     # Block git commands that modify the working tree
