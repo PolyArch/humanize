@@ -188,6 +188,11 @@ if [[ -n "$_cfg_codex_model" && ! "$_cfg_codex_model" =~ ^[a-zA-Z0-9._-]+$ ]]; t
     echo "Warning: Invalid codex_model in merged config: $_cfg_codex_model" >&2
     echo "  Ignoring configured codex_model; using caller preset or fallback" >&2
     _cfg_codex_model=""
+elif [[ -n "$_cfg_codex_model" && ! "$_cfg_codex_model" =~ ^(gpt-|o[0-9]) ]]; then
+    echo "Warning: Unsupported codex_model in merged config: $_cfg_codex_model" >&2
+    echo "  Must start with a Codex model prefix: gpt- or o[0-9]" >&2
+    echo "  Ignoring configured codex_model; using caller preset or fallback" >&2
+    _cfg_codex_model=""
 fi
 DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-${_cfg_codex_model:-gpt-5.4}}"
 _cfg_codex_effort="$(get_config_value "$_LOOP_COMMON_CONFIG" "codex_effort" 2>/dev/null || true)"

@@ -435,6 +435,41 @@ assert_hook_wrapper_blocked \
     "Bash validator blocks assignment-prefixed stop gate execution" \
     "VAR=1 ./scripts/rlcr-stop-gate.sh"
 
+echo "Test 32: Bash validator blocks timeout-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks timeout-wrapped hook execution" \
+    "timeout 1 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 33: Bash validator blocks nice-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks nice-wrapped hook execution" \
+    "nice -n 10 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 34: Bash validator blocks nohup-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks nohup-wrapped hook execution" \
+    "nohup bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 35: Bash validator blocks strace-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks strace-wrapped hook execution" \
+    "strace -f bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 36: Bash validator blocks ltrace-wrapped hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks ltrace-wrapped hook execution" \
+    "ltrace -f bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 37: Bash validator blocks timeout+env hook execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks timeout+env hook execution" \
+    "timeout --signal=TERM 1 env FOO=1 bash hooks/loop-codex-stop-hook.sh"
+
+echo "Test 38: Bash validator blocks nohup+nice stop gate execution"
+assert_hook_wrapper_blocked \
+    "Bash validator blocks nohup+nice stop gate execution" \
+    "nohup nice -n 5 ./scripts/rlcr-stop-gate.sh"
+
 echo ""
 echo "========================================="
 echo "Test Results"

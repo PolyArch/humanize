@@ -1126,23 +1126,6 @@ enter_finalize_phase() {
     echo "State file renamed to: $LOOP_DIR/finalize-state.md" >&2
 
     local finalize_summary_file="$LOOP_DIR/finalize-summary.md"
-    if [[ ! -f "$finalize_summary_file" ]]; then
-        cat > "$finalize_summary_file" << 'EOF'
-# Finalize Summary
-
-## Work Completed
-- [Describe what was implemented in this phase]
-
-## Files Changed
-- [List created/modified files]
-
-## Validation
-- [List tests/commands run and outcomes]
-
-## Remaining Items
-- [List unresolved items, if any]
-EOF
-    fi
     local finalize_prompt
 
     if [[ -n "$skip_reason" ]]; then

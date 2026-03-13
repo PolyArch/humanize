@@ -219,6 +219,32 @@ else
 
     assert_contains "invalid config: warns on invalid codex_effort" \
         "Warning: Invalid codex_effort in merged config: superhigh" "$result"
+
+    # Shell-safe but non-Codex models should also warn and fall back
+    for invalid_model in haiku false claude-3; do
+        setup_test_dir
+        INVALID_PROJECT="$TEST_DIR/invalid-model-project"
+        mkdir -p "$INVALID_PROJECT/.humanize"
+        printf '{"codex_model": "%s"}' "$invalid_model" > "$INVALID_PROJECT/.humanize/config.json"
+
+        result=$(bash -c "
+            export CLAUDE_PROJECT_DIR='$INVALID_PROJECT'
+            export XDG_CONFIG_HOME='$TEST_DIR/no-user-config-invalid-model'
+            source '$LOOP_COMMON'
+            printf 'RESULT:%s|%s\n' \"\$DEFAULT_CODEX_MODEL\" \"\$DEFAULT_CODEX_EFFORT\"
+        " 2>&1 || echo "ERROR")
+
+        result_line="$(printf '%s\n' "$result" | grep '^RESULT:' | tail -n 1)"
+
+        assert_eq "non-Codex config ($invalid_model): codex_model falls back to gpt-5.4" \
+            "gpt-5.4" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
+
+        assert_eq "non-Codex config ($invalid_model): codex_effort stays at high fallback" \
+            "high" "$(echo "$result_line" | cut -d'|' -f2)"
+
+        assert_contains "non-Codex config ($invalid_model): warns on unsupported codex_model" \
+            "Warning: Unsupported codex_model in merged config: $invalid_model" "$result"
+    done
 fi
 
 echo ""
