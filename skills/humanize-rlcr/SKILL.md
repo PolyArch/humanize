@@ -107,6 +107,8 @@ Pass these through `setup-rlcr-loop.sh`:
 | `--push-every-round` | Require push each round | false |
 | `--claude-answer-codex` | Let Claude answer open questions directly | false |
 | `--agent-teams` | Enable agent teams mode | false |
+| `--yolo` | Skip quiz and enable --claude-answer-codex | false |
+| `--skip-quiz` | Skip Plan Understanding Quiz (implicit in skill mode) | false |
 
 Review phase `codex review` runs with `gpt-5.4:high`.
 

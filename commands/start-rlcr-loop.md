@@ -1,10 +1,11 @@
 ---
 description: "Start iterative loop with Codex review"
-argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--claude-answer-codex] [--agent-teams]"
+argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--claude-answer-codex] [--agent-teams] [--yolo] [--skip-quiz]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh:*)"
   - "Read"
   - "Task"
+  - "AskUserQuestion"
 hide-from-slash-command-tool: "true"
 ---
 
@@ -57,9 +58,58 @@ If any condition fails, skip the pre-check and let the setup script handle path 
 
 ---
 
+## Plan Understanding Quiz
+
+Before running the setup script, verify the user genuinely understands what the plan will do. This is an advisory check -- it never blocks the loop, but catches "wishful thinking" users who blindly accepted a generated plan without reading it.
+
+**Skip this entire quiz if** any of these conditions are true:
+- `$ARGUMENTS` contains `--skip-impl` (no plan to quiz about)
+- `$ARGUMENTS` contains `--yolo` (user explicitly opted out of all pre-flight checks)
+- `$ARGUMENTS` contains `--skip-quiz` (user explicitly opted out of the quiz)
+- `$ARGUMENTS` contains `-h` or `--help` (just showing help)
+- No plan content is available (the compliance pre-check was skipped because no plan file path could be determined)
+
+### Run the quiz agent
+
+1. Reuse the plan content that was already read during the compliance pre-check above (do not re-read the file).
+
+2. Use the Task tool to invoke the `humanize:plan-understanding-quiz` agent (opus model):
+   ```
+   Task tool parameters:
+   - model: "opus"
+   - prompt: Include the plan file content and ask the agent to:
+     1. Explore the repository structure for context
+     2. Analyze the plan's technical implementation details
+     3. Generate 2 multiple-choice questions (4 options each) and a plan summary
+     4. Return in the structured format: QUESTION_1, OPTION_1A-D, ANSWER_1, QUESTION_2, OPTION_2A-D, ANSWER_2, PLAN_SUMMARY
+   ```
+
+3. **Parse the result**: Extract all 13 fields from the agent output (QUESTION_1, OPTION_1A through OPTION_1D, ANSWER_1, QUESTION_2, OPTION_2A through OPTION_2D, ANSWER_2, PLAN_SUMMARY). If the output is malformed (any field missing or ANSWER not A/B/C/D), warn: "Plan understanding quiz unavailable, continuing without it." and proceed to the Setup section below.
+
+### Ask questions and evaluate
+
+4. Use AskUserQuestion to present QUESTION_1 as a multiple-choice question with the 4 options (OPTION_1A through OPTION_1D). Compare the user's choice against ANSWER_1:
+   - If the user selected the correct answer, mark QUESTION_1 as **PASS**
+   - Otherwise, mark as **WRONG**
+
+5. Use AskUserQuestion to present QUESTION_2 as a multiple-choice question with the 4 options (OPTION_2A through OPTION_2D). Compare the user's choice against ANSWER_2 using the same criteria.
+
+### Decide whether to proceed
+
+6. **If both questions PASS**: Briefly acknowledge ("Your understanding of the plan looks solid. Proceeding with setup.") and continue to the Setup section below.
+
+7. **If one or both questions are WRONG**: Show the PLAN_SUMMARY to the user to help them understand what the plan does and the correct answers to the questions they missed. Then use AskUserQuestion with the question: "Would you like to proceed with the RLCR loop anyway, or stop and review the plan more carefully first?" with these choices:
+   - "Proceed with RLCR loop"
+   - "Stop and review the plan first"
+
+   - If the user chooses **"Proceed with RLCR loop"**: Continue to the Setup section below.
+   - If the user chooses **"Stop and review the plan first"**: Report "Stopping. Please review the plan file and re-run start-rlcr-loop when ready." and **stop the command**.
+
+---
+
 ## Setup
 
-If the pre-check passed (or was skipped), execute the setup script to initialize the loop:
+If the pre-check passed (or was skipped), and the quiz passed (or was skipped or user chose to proceed), execute the setup script to initialize the loop:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh" $ARGUMENTS

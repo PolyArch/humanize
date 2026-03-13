@@ -50,6 +50,9 @@ OPTIONS:
   --agent-teams          Enable Claude Code Agent Teams mode for parallel development.
                          Requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 environment variable.
                          Claude acts as team leader, splitting tasks among team members.
+  --yolo                 Skip Plan Understanding Quiz and let Claude answer Codex Open
+                         Questions directly. Alias for --skip-quiz --claude-answer-codex.
+  --skip-quiz            Skip the Plan Understanding Quiz only (without other changes).
   -h, --help             Show help message
 ```
 
