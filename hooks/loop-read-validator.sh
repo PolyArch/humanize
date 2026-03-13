@@ -88,8 +88,17 @@ if [[ -z "$ACTIVE_LOOP_DIR" ]]; then
     exit 0
 fi
 
-# Detect if we're in Finalize Phase (finalize-state.md exists)
+# Detect loop phase from state file
 STATE_FILE_TO_PARSE=$(resolve_active_state_file "$ACTIVE_LOOP_DIR")
+
+# In Methodology Analysis Phase, allow reading all round files (summaries and review results)
+# The analysis agent needs access to the full development history
+if [[ "$STATE_FILE_TO_PARSE" == *"/methodology-analysis-state.md" ]]; then
+    # Only allow reads within the active loop directory
+    if [[ "$FILE_PATH" == "$ACTIVE_LOOP_DIR/"* ]]; then
+        exit 0
+    fi
+fi
 
 # Parse state file using strict validation (fail closed on malformed state)
 if ! parse_state_file_strict "$STATE_FILE_TO_PARSE" 2>/dev/null; then
