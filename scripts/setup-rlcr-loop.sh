@@ -90,6 +90,13 @@ OPTIONS:
   --agent-teams        Enable Claude Code Agent Teams mode for parallel development.
                        Requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 environment variable.
                        Claude acts as team leader, splitting tasks among team members.
+  --yolo               Skip Plan Understanding Quiz and let Claude answer Codex Open
+                       Questions directly. Convenience alias for --skip-quiz
+                       --claude-answer-codex. Use when you trust the plan and want
+                       maximum automation.
+  --skip-quiz          Skip the Plan Understanding Quiz only (without other behavioral
+                       changes). The quiz is an advisory pre-flight check that verifies
+                       you understand the plan before committing to an RLCR loop.
   --allow-empty-bitlesson-none
                        Allow BitLesson delta with action:none even with no new entries (default)
   --require-bitlesson-entry-for-none
@@ -122,6 +129,8 @@ EXAMPLES:
   /humanize:start-rlcr-loop docs/impl.md --max 20
   /humanize:start-rlcr-loop plan.md --codex-model ${DEFAULT_CODEX_MODEL}:${DEFAULT_CODEX_EFFORT}
   /humanize:start-rlcr-loop plan.md --codex-timeout 7200  # 2 hour timeout
+  /humanize:start-rlcr-loop plan.md --yolo              # skip quiz, full automation
+  /humanize:start-rlcr-loop plan.md --skip-quiz          # skip quiz only
 
 STOPPING:
   - /humanize:cancel-rlcr-loop   Cancel the active loop
@@ -235,6 +244,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --agent-teams)
             AGENT_TEAMS="true"
+            shift
+            ;;
+        --yolo)
+            ASK_CODEX_QUESTION="false"
+            shift
+            ;;
+        --skip-quiz)
+            # No-op in setup script; quiz logic lives in command markdown
             shift
             ;;
         --allow-empty-bitlesson-none)

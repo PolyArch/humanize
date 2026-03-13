@@ -96,6 +96,8 @@ Transforms a rough draft document into a structured implementation plan with:
 - `--push-every-round` - Require git push after each round
 - `--claude-answer-codex` - Let Claude answer Codex Open Questions directly (default is AskUserQuestion)
 - `--agent-teams` - Enable Agent Teams mode
+- `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
+- `--skip-quiz` - Skip the Plan Understanding Quiz only
 - `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
 
 ### Cancel RLCR Loop

@@ -590,13 +590,15 @@ If all of the following are true:
 Then start work immediately by running:
 
 ```bash
-/humanize:start-rlcr-loop <output-plan-path>
+/humanize:start-rlcr-loop --skip-quiz <output-plan-path>
 ```
+
+The `--skip-quiz` flag is passed because the user has already demonstrated understanding of the plan through the gen-plan convergence discussion.
 
 If the command invocation is not available in this context, fall back to the setup script:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh" --plan-file <output-plan-path>
+"${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh" --skip-quiz --plan-file <output-plan-path>
 ```
 
 If the auto-start attempt fails, report the failure reason and provide the exact manual command for the user to run:
