@@ -11,6 +11,35 @@ Humanize creates an iterative feedback loop with two phases:
 
 The loop continues until all acceptance criteria are met or no issues remain.
 
+## Begin with the End in Mind
+
+Before the RLCR loop starts any work, Humanize runs a **Plan Understanding Quiz** -- a brief pre-flight check that verifies you genuinely understand the plan you are about to execute.
+
+### Why This Exists
+
+The most expensive failure in AI-assisted development is not a bug. It is running a 40-round RLCR loop on a plan you never actually read. We call this **wishful coding**: treating a generated plan like a wish -- toss it in, hope for the best, check back later.
+
+The problem is structural. An RLCR loop is an amplifier: it will faithfully execute whatever plan you give it. If the plan is wrong, the loop makes it wrong faster and at scale. If the plan is right but you do not understand it, you cannot course-correct when Codex raises questions, and the loop drifts.
+
+Understanding your plan before execution is not optional overhead. It is the single highest-leverage thing you can do to ensure the loop succeeds.
+
+### How the Quiz Works
+
+When you run `start-rlcr-loop`, an independent agent analyzes the plan and generates two multiple-choice questions about the plan's technical implementation details:
+
+1. **What components are changing and how?** -- Tests whether you know the core mechanism.
+2. **How do the pieces connect?** -- Tests whether you understand the architecture being modified.
+
+If you answer both correctly, the loop proceeds immediately. If you miss one or both, Humanize explains what the plan actually does and offers a choice: proceed anyway, or stop and review.
+
+The quiz is advisory, not a gate. You always have the option to proceed. But that moment of friction -- the two seconds it takes to read the question and realize you do not know the answer -- is the entire point.
+
+### Skipping the Quiz
+
+- `--skip-quiz` -- Skip the quiz only. The rest of the RLCR loop behaves normally.
+- `--yolo` -- Skip the quiz AND let Claude answer Codex's open questions directly (`--claude-answer-codex`). This is full automation mode for users who have already reviewed the plan and want to hand over complete control.
+- Plans started via `gen-plan --auto-start-rlcr-if-converged` skip the quiz automatically, because the gen-plan convergence discussion already verified the user's understanding.
+
 ## Commands
 
 | Command | Purpose |

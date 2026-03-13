@@ -15,6 +15,22 @@ A Claude Code plugin that provides iterative development with independent AI rev
 - **Iteration over Perfection** -- Instead of expecting perfect output in one shot, Humanize leverages continuous feedback loops where issues are caught early and refined incrementally.
 - **One Build + One Review** -- Claude implements, Codex independently reviews. No blind spots.
 - **Ralph Loop with Swarm Mode** -- Iterative refinement continues until all acceptance criteria are met. Optionally parallelize with Agent Teams.
+- **Begin with the End in Mind** -- Before the loop starts, Humanize verifies that *you* understand the plan you are about to execute. See [No Wishful Coding](#no-wishful-coding) below.
+
+## No Wishful Coding
+
+A common failure mode in AI-assisted development is **wishful coding**: the user feeds a generated plan into an automated loop without truly understanding what it will do, hoping the AI will figure it out. This leads to wasted compute, off-track implementations, and results that nobody asked for.
+
+Humanize takes the position that **the human must remain the architect**. An RLCR loop is a powerful amplifier -- it faithfully executes whatever plan you give it, for better or worse. If you do not understand your own plan, the loop will not save you; it will only burn tokens faster.
+
+To enforce this principle, `start-rlcr-loop` includes a **Plan Understanding Quiz**: a brief, automated pre-flight check that asks you two technical questions about the plan's implementation details. It is not a gate -- you can always choose to proceed -- but it serves as a moment of honest self-assessment:
+
+- **Do you know which components this plan modifies?**
+- **Do you understand the technical mechanism it uses?**
+
+If you cannot answer these questions, you probably should not be running the loop yet. Go back, read the plan, and make sure you can explain it to yourself before asking a machine to build it.
+
+For users who have reviewed the plan and want maximum automation, `--yolo` skips the quiz and hands full control to Humanize.
 
 ## How It Works
 
