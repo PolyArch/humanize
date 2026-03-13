@@ -83,14 +83,14 @@ if [[ -n "$_MA_BASH_DIR" ]] && [[ -f "$_MA_BASH_DIR/methodology-analysis-state.m
         exit 0
     fi
     # Block git commands that modify the working tree
-    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push|restore|clean|rm|mv)'; then
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push|restore|clean|rm|mv|switch|pull|clone|submodule|worktree)'; then
         echo "# Bash Blocked During Methodology Analysis
 
 Git write commands are not allowed during the methodology analysis phase." >&2
         exit 2
     fi
-    # Block file manipulation commands (touch, mv, cp, rm, etc.)
-    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(tee|install|touch|mv|cp|rm|dd|truncate|chmod|chown)[[:space:]]'; then
+    # Block file manipulation commands (touch, mv, cp, rm, mkdir, ln, etc.)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(tee|install|touch|mv|cp|rm|dd|truncate|chmod|chown|mkdir|rmdir|ln|mktemp)[[:space:]]'; then
         echo "# Bash Blocked During Methodology Analysis
 
 File modification commands are not allowed during the methodology analysis phase." >&2

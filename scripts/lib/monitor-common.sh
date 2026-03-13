@@ -130,7 +130,7 @@ monitor_restore_terminal() {
 monitor_get_status_color() {
     local status="$1"
     case "$status" in
-        active) echo "\033[1;32m" ;;  # green
+        active|methodology-analysis) echo "\033[1;32m" ;;  # green
         completed) echo "\033[1;36m" ;;  # cyan
         failed|error|timeout) echo "\033[1;31m" ;;  # red
         cancelled) echo "\033[1;33m" ;;  # yellow

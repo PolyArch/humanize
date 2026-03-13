@@ -126,9 +126,16 @@ complete_methodology_analysis() {
         return 1
     fi
 
-    # Require the analysis report to exist (ensures the Opus agent actually ran)
+    # Require the analysis report to exist with content (ensures the Opus agent
+    # actually produced an analysis, not just an empty/truncated file)
     if [[ ! -f "$report_file" ]]; then
         echo "Warning: methodology-analysis-report.md missing, blocking completion" >&2
+        return 1
+    fi
+    local report_content
+    report_content=$(cat "$report_file" 2>/dev/null || echo "")
+    if [[ -z "$report_content" ]]; then
+        echo "Warning: methodology-analysis-report.md is empty, blocking completion" >&2
         return 1
     fi
 
