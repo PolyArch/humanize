@@ -66,6 +66,53 @@ if is_round_file_type "$FILE_PATH_LOWER" "todos"; then
 fi
 
 # ========================================
+# Methodology Analysis Phase Read Restriction
+# ========================================
+# During methodology analysis, restrict reads of files within the loop
+# directory to only the artifacts the analysis agent needs. This prevents
+# project-specific information from leaking into the analysis report.
+# Files outside the loop directory are allowed (Claude needs system files).
+# This check MUST come before the summary/prompt early exit below,
+# otherwise non-summary/prompt files in the loop dir escape restriction.
+
+PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
+LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
+ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
+
+if [[ -n "$ACTIVE_LOOP_DIR" ]]; then
+    _MA_STATE=$(resolve_active_state_file "$ACTIVE_LOOP_DIR")
+    if [[ "$_MA_STATE" == *"/methodology-analysis-state.md" ]]; then
+        # Canonicalize to prevent path traversal
+        _ma_real_path=$(realpath "$FILE_PATH" 2>/dev/null || echo "")
+        _ma_real_loop=$(realpath "$ACTIVE_LOOP_DIR" 2>/dev/null || echo "")
+        if [[ -n "$_ma_real_path" ]] && [[ -n "$_ma_real_loop" ]] && \
+           [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
+            _ma_basename=$(basename "$_ma_real_path")
+            # Allowlist: only files the analysis agent needs
+            # - round-*-summary.md: development record summaries
+            # - round-*-review-result.md: review feedback
+            # - methodology-analysis-report.md: the agent's own output
+            # - methodology-analysis-done.md: completion marker
+            # - methodology-analysis-state.md: state file (for parsing)
+            case "$_ma_basename" in
+                round-*-summary.md|round-*-review-result.md|methodology-analysis-report.md|methodology-analysis-done.md|methodology-analysis-state.md)
+                    exit 0
+                    ;;
+                *)
+                    echo "# Read Blocked During Methodology Analysis
+
+Only analysis artifacts can be read from the loop directory during this phase.
+Allowed: round-*-summary.md, round-*-review-result.md, methodology-analysis-*.md" >&2
+                    exit 2
+                    ;;
+            esac
+        fi
+        # Files outside loop dir are allowed (Claude needs system files to function)
+        exit 0
+    fi
+fi
+
+# ========================================
 # Check for Round Files (summary/prompt)
 # ========================================
 
@@ -80,9 +127,8 @@ IN_HUMANIZE_LOOP_DIR=$(is_in_humanize_loop_dir "$FILE_PATH" && echo "true" || ec
 # Find Active Loop and Current Round
 # ========================================
 
-PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
-LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
-ACTIVE_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
+# Re-use ACTIVE_LOOP_DIR if already set by methodology analysis check above
+ACTIVE_LOOP_DIR="${ACTIVE_LOOP_DIR:-${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}}"
 
 if [[ -z "$ACTIVE_LOOP_DIR" ]]; then
     exit 0
@@ -90,29 +136,6 @@ fi
 
 # Detect loop phase from state file
 STATE_FILE_TO_PARSE=$(resolve_active_state_file "$ACTIVE_LOOP_DIR")
-
-# In Methodology Analysis Phase, allow reading specific analysis-related files only
-# The Opus agent needs round summaries, review results, and its own artifacts
-if [[ "$STATE_FILE_TO_PARSE" == *"/methodology-analysis-state.md" ]]; then
-    # Canonicalize to prevent path traversal (e.g., $LOOP_DIR/../secrets)
-    local_real_path=$(realpath "$FILE_PATH" 2>/dev/null || echo "")
-    local_real_loop=$(realpath "$ACTIVE_LOOP_DIR" 2>/dev/null || echo "")
-    if [[ -n "$local_real_path" ]] && [[ -n "$local_real_loop" ]] && \
-       [[ "$local_real_path" == "$local_real_loop/"* ]]; then
-        local_basename=$(basename "$local_real_path")
-        # Allowlist: only files the analysis agent needs
-        # - round-*-summary.md: development record summaries
-        # - round-*-review-result.md: Codex review feedback
-        # - methodology-analysis-report.md: the agent's own output
-        # - methodology-analysis-done.md: completion marker
-        # - methodology-analysis-state.md: state file (for parsing)
-        case "$local_basename" in
-            round-*-summary.md|round-*-review-result.md|methodology-analysis-report.md|methodology-analysis-done.md|methodology-analysis-state.md)
-                exit 0
-                ;;
-        esac
-    fi
-fi
 
 # Parse state file using strict validation (fail closed on malformed state)
 if ! parse_state_file_strict "$STATE_FILE_TO_PARSE" 2>/dev/null; then

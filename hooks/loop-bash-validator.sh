@@ -98,6 +98,35 @@ if [[ -n "$ACTIVE_LOOP_DIR" ]]; then
     CURRENT_ROUND="$STATE_CURRENT_ROUND"
 
     # ========================================
+    # Methodology Analysis Phase Bash Restriction
+    # ========================================
+    # During methodology analysis, block file-modifying bash commands.
+    # Only gh commands and read-only operations are allowed.
+    # This prevents source code modifications after Codex has signed off.
+
+    if [[ "$STATE_FILE" == *"/methodology-analysis-state.md" ]]; then
+        # Allow gh commands for issue creation
+        if [[ "$COMMAND_LOWER" =~ ^[[:space:]]*gh[[:space:]] ]]; then
+            exit 0
+        fi
+        # Block git commands that modify the working tree
+        if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])git[[:space:]]+(commit|add|reset|checkout|merge|rebase|cherry-pick|am|apply|stash|push)'; then
+            echo "# Bash Blocked During Methodology Analysis
+
+Git commands that modify the working tree are not allowed during the methodology analysis phase." >&2
+            exit 2
+        fi
+        # Block in-place file editing tools (bypass for Write/Edit tool restriction)
+        if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&])(tee|install)[[:space:]]' || \
+           echo "$COMMAND_LOWER" | grep -qE 'sed[[:space:]]+-i|awk[[:space:]]+-i[[:space:]]+inplace|perl[[:space:]]+-[^[:space:]]*i'; then
+            echo "# Bash Blocked During Methodology Analysis
+
+File modification commands are not allowed during the methodology analysis phase." >&2
+            exit 2
+        fi
+    fi
+
+    # ========================================
     # Block Git Push When push_every_round is false
     # ========================================
     # Default behavior: commits stay local, no need to push to remote

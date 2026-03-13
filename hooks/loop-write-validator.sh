@@ -97,6 +97,36 @@ if [[ "$IN_PR_LOOP_DIR" == "true" ]]; then
 fi
 
 # ========================================
+# Methodology Analysis Phase Write Restriction
+# ========================================
+# During methodology analysis, only methodology artifacts can be written.
+# This prevents source code modifications after Codex has signed off.
+# This check MUST come before the file type early exits below.
+
+PROJECT_ROOT="${PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
+LOOP_BASE_DIR="${LOOP_BASE_DIR:-$PROJECT_ROOT/.humanize/rlcr}"
+_MA_LOOP_DIR="${LOOP_DIR:-$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")}"
+
+if [[ -n "$_MA_LOOP_DIR" ]] && [[ -f "$_MA_LOOP_DIR/methodology-analysis-state.md" ]]; then
+    _ma_real_path=$(realpath "$FILE_PATH" 2>/dev/null || echo "")
+    _ma_real_loop=$(realpath "$_MA_LOOP_DIR" 2>/dev/null || echo "")
+    if [[ -n "$_ma_real_path" ]] && [[ -n "$_ma_real_loop" ]] && \
+       [[ "$_ma_real_path" == "$_ma_real_loop/"* ]]; then
+        _ma_basename=$(basename "$_ma_real_path")
+        case "$_ma_basename" in
+            methodology-analysis-report.md|methodology-analysis-done.md)
+                exit 0
+                ;;
+        esac
+    fi
+    echo "# Write Blocked During Methodology Analysis
+
+During the methodology analysis phase, only methodology artifacts can be written.
+Allowed: methodology-analysis-report.md, methodology-analysis-done.md" >&2
+    exit 2
+fi
+
+# ========================================
 # Determine File Types
 # ========================================
 
