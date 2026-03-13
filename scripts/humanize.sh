@@ -56,7 +56,7 @@ humanize_parse_goal_tracker() {
     # using the same methodology as completed_acs to keep counts consistent
     local total_acs
     total_acs=$(sed -n '/### Acceptance Criteria/,/^---$/p' "$tracker_file" \
-        | grep -oE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
+        | grep -aoE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
     total_acs=${total_acs:-0}
 
     # Count Active Tasks (tasks that are NOT completed AND NOT deferred)
@@ -98,7 +98,7 @@ humanize_parse_goal_tracker() {
     # not just line-start, to handle rows with multiple comma-separated ACs (e.g. swarm mode)
     local completed_acs
     completed_acs=$(sed -n '/### Completed and Verified/,/^###/p' "$tracker_file" \
-        | grep -oE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
+        | grep -aoE 'AC-?[0-9]+(\.[0-9]+)?' | sort -u | wc -l | tr -d ' ')
     completed_acs=${completed_acs:-0}
 
     # Count Deferred tasks
