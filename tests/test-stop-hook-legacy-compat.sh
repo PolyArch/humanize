@@ -5,7 +5,8 @@
 # Covers:
 # - Untracked legacy .humanize-* directories do not trigger git-dirty blocks
 # - Untracked .humanizeconfig still triggers git-dirty blocks as a real file
-# - Legacy loops without bitlesson_required stay disabled even if bitlesson.md exists
+# - Legacy loops without bitlesson_required stay disabled even if
+#   .humanize/bitlesson.md exists
 #
 
 set -euo pipefail
@@ -182,10 +183,10 @@ create_stop_hook_fixture "$TEST2_REPO" true
 run_stop_hook "$TEST2_REPO"
 
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -f "$RUN_MARKER" ]]; then
-    pass "Legacy loops without bitlesson_required still reach Codex even when bitlesson.md exists"
+    pass "Legacy loops without bitlesson_required still reach Codex even when .humanize/bitlesson.md exists"
 else
     fail \
-        "Legacy loops without bitlesson_required still reach Codex even when bitlesson.md exists" \
+        "Legacy loops without bitlesson_required still reach Codex even when .humanize/bitlesson.md exists" \
         "exit 0 and Codex invoked" \
         "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), output: $RUN_OUTPUT"
 fi

@@ -15,11 +15,11 @@ echo "Bitlesson Select Routing Tests"
 echo "=========================================="
 echo ""
 
-# Helper: create a mock bitlesson.md with required content
+# Helper: create a mock .humanize/bitlesson.md with required content
 create_mock_bitlesson() {
     local dir="$1"
-    mkdir -p "$dir"
-    cat > "$dir/bitlesson.md" <<'EOF'
+    mkdir -p "$dir/.humanize"
+    cat > "$dir/.humanize/bitlesson.md" <<'EOF'
 # BitLesson Knowledge Base
 ## Entries
 <!-- placeholder -->
@@ -78,7 +78,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     bash "$BITLESSON_SELECT" \
     --task "Fix a bug" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
     pass "Codex branch: gpt-* model routes to codex (produces LESSON_IDS output)"
@@ -107,7 +107,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     bash "$BITLESSON_SELECT" \
     --task "Fix a bug" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
     pass "Claude branch: haiku model routes to claude (produces LESSON_IDS output)"
@@ -136,7 +136,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     bash "$BITLESSON_SELECT" \
     --task "Refactor logic" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
     pass "Claude branch: sonnet model routes to claude (produces LESSON_IDS output)"
@@ -165,7 +165,7 @@ result=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" \
     bash "$BITLESSON_SELECT" \
     --task "Write docs" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$result" | grep -q "LESSON_IDS:"; then
     pass "Claude branch: OPUS (uppercase) model routes to claude (case-insensitive match)"
@@ -191,7 +191,7 @@ stderr_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     bash "$BITLESSON_SELECT" \
     --task "Fix a bug" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
 
 if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qiE "unknown|error"; then
     pass "Unknown model: exits non-zero with clear error message"
@@ -227,7 +227,7 @@ stderr_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     bash "$BITLESSON_SELECT" \
     --task "Fix a bug" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>&1 >/dev/null) || exit_code=$?
 
 if [[ $exit_code -ne 0 ]] && echo "$stderr_out" | grep -qi "codex"; then
     pass "Codex branch: missing codex binary exits non-zero with informative error"
@@ -264,7 +264,7 @@ stdout_out=$(CLAUDE_PROJECT_DIR="$TEST_DIR" XDG_CONFIG_HOME="$TEST_DIR/no-user" 
     bash "$BITLESSON_SELECT" \
     --task "Fix a bug" \
     --paths "scripts/bitlesson-select.sh" \
-    --bitlesson-file "$TEST_DIR/bitlesson.md" 2>/dev/null) || exit_code=$?
+    --bitlesson-file "$TEST_DIR/.humanize/bitlesson.md" 2>/dev/null) || exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && echo "$stdout_out" | grep -q "LESSON_IDS: NONE"; then
     pass "Claude model falls back to codex when claude binary is missing"

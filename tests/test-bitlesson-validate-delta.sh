@@ -21,6 +21,7 @@ echo ""
 make_bitlesson_file() {
     local path="$1"
 
+    mkdir -p "$(dirname "$path")"
     cat > "$path" <<EOF
 # BitLesson
 
@@ -94,7 +95,7 @@ assert_passes() {
 }
 
 setup_test_dir
-BITLESSON_FILE="$TEST_DIR/bitlesson.md"
+BITLESSON_FILE="$TEST_DIR/.humanize/bitlesson.md"
 make_bitlesson_file "$BITLESSON_FILE"
 
 SUMMARY_FILE="$TEST_DIR/add-empty-notes.md"

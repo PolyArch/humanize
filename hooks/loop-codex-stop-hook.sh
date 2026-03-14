@@ -585,8 +585,9 @@ if [[ "$GIT_IS_REPO" == "true" ]]; then
 
     # Check for uncommitted changes (staged or unstaged) using cached status.
     # Exclude untracked .humanize/ paths and .humanize-* dash-separated legacy
-    # variants from the dirty determination because local plugin state
-    # (bitlesson.md, config.json, rlcr/) is intentionally untracked.
+    # variants from the dirty determination because local plugin state under
+    # .humanize/ (.humanize/bitlesson.md, config.json, rlcr/) is intentionally
+    # untracked.
     HUMANIZE_UNTRACKED_PATTERN='^\?\? \.humanize[-/]'
     GIT_STATUS_FOR_BLOCK=$(echo "$GIT_STATUS_CACHED" | grep -vE "$HUMANIZE_UNTRACKED_PATTERN" || true)
     if [[ -n "$GIT_STATUS_FOR_BLOCK" ]]; then
