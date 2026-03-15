@@ -280,8 +280,9 @@ EOF
 
     BITLESSON_NOTES=$(echo "$BITLESSON_DELTA_BLOCK" | sed -nE 's/^[[:space:]-]*Notes:[[:space:]]*(.*)$/\1/p' | head -n1)
     BITLESSON_NOTES=$(echo "$BITLESSON_NOTES" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    NOTES_PLACEHOLDER_REGEX='^(\[.*\]|<.*>)$'
 
-    if [[ -z "$BITLESSON_NOTES" ]] || [[ "$BITLESSON_NOTES" =~ ^(\[.*\]|<.*>)$ ]]; then
+    if [[ -z "$BITLESSON_NOTES" ]] || [[ "$BITLESSON_NOTES" =~ $NOTES_PLACEHOLDER_REGEX ]]; then
         FALLBACK=$(cat <<'EOF'
 # BitLesson Delta Missing Notes
 
