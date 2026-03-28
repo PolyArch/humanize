@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Install/update Humanize native Codex hooks in CODEX_HOME/hooks.json.
 #

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Install/upgrade Humanize skills for Kimi and/or Codex.
 #
@@ -344,7 +344,7 @@ install_bitlesson_selector_shim() {
     mkdir -p "$COMMAND_BIN_DIR"
 
     cat > "$shim_path" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 candidate_paths=(

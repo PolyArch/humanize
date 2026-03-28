@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Robustness tests for setup scripts
 #
@@ -60,6 +60,23 @@ init_basic_git_repo() {
     git add file.txt
     git commit -q -m "Initial commit"
     cd - > /dev/null
+}
+
+# Create a minimal PATH toolset in a test bin directory so scripts using
+# '/usr/bin/env bash' still run even in restricted PATH scenarios.
+prepare_runtime_bin() {
+    local bin_dir="$1"
+    local tool
+    local tool_path
+
+    mkdir -p "$bin_dir"
+
+    for tool in bash env git dirname cat sed awk grep mkdir date head od tr wc sort ls rm cp mv chmod ln readlink printf timeout gtimeout; do
+        tool_path=$(command -v "$tool" 2>/dev/null || true)
+        if [[ -n "$tool_path" && -x "$tool_path" && ! -e "$bin_dir/$tool" ]]; then
+            ln -s "$tool_path" "$bin_dir/$tool"
+        fi
+    done
 }
 
 # Run setup-rlcr-loop.sh with proper isolation from real RLCR loop
@@ -239,7 +256,7 @@ git -C "$TEST_DIR/repo9" add .gitignore && git -C "$TEST_DIR/repo9" commit -q -m
 
 # Create mock codex
 mkdir -p "$TEST_DIR/repo9/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo9/bin/codex"
 chmod +x "$TEST_DIR/repo9/bin/codex"
 
@@ -265,7 +282,7 @@ echo "plan.md" >> "$TEST_DIR/repo10/.gitignore"
 git -C "$TEST_DIR/repo10" add .gitignore && git -C "$TEST_DIR/repo10" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo10/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo10/bin/codex"
 chmod +x "$TEST_DIR/repo10/bin/codex"
 
@@ -288,7 +305,7 @@ echo "path with spaces/" >> "$TEST_DIR/repo11/.gitignore"
 git -C "$TEST_DIR/repo11" add .gitignore && git -C "$TEST_DIR/repo11" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo11/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo11/bin/codex"
 chmod +x "$TEST_DIR/repo11/bin/codex"
 
@@ -307,7 +324,7 @@ mkdir -p "$TEST_DIR/repo12"
 init_basic_git_repo "$TEST_DIR/repo12"
 
 mkdir -p "$TEST_DIR/repo12/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo12/bin/codex"
 chmod +x "$TEST_DIR/repo12/bin/codex"
 
@@ -328,7 +345,7 @@ init_basic_git_repo "$TEST_DIR/repo13"
 create_minimal_plan "$TEST_DIR/repo13"
 
 mkdir -p "$TEST_DIR/repo13/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo13/bin/codex"
 chmod +x "$TEST_DIR/repo13/bin/codex"
 
@@ -357,7 +374,7 @@ echo "plan.md" >> "$TEST_DIR/repo14/.gitignore"
 git -C "$TEST_DIR/repo14" add .gitignore && git -C "$TEST_DIR/repo14" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo14/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo14/bin/codex"
 chmod +x "$TEST_DIR/repo14/bin/codex"
 
@@ -389,7 +406,7 @@ echo "plan.md" >> "$TEST_DIR/repo15/.gitignore"
 git -C "$TEST_DIR/repo15" add .gitignore && git -C "$TEST_DIR/repo15" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo15/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo15/bin/codex"
 chmod +x "$TEST_DIR/repo15/bin/codex"
 
@@ -433,7 +450,7 @@ git -C "$TEST_DIR/repo16b" add .gitignore && git -C "$TEST_DIR/repo16b" commit -
 touch "$TEST_DIR/repo16b/.humanizeconfig"
 
 mkdir -p "$TEST_DIR/repo16b/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo16b/bin/codex"
 chmod +x "$TEST_DIR/repo16b/bin/codex"
 
@@ -473,7 +490,7 @@ create_minimal_plan "$TEST_DIR/repo18"
 git -C "$TEST_DIR/repo18" add plan.md && git -C "$TEST_DIR/repo18" commit -q -m "Add plan"
 
 mkdir -p "$TEST_DIR/repo18/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo18/bin/codex"
 chmod +x "$TEST_DIR/repo18/bin/codex"
 
@@ -573,7 +590,7 @@ max_iterations: 42
 EOF
 
 mkdir -p "$TEST_DIR/repo24/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo24/bin/codex"
 chmod +x "$TEST_DIR/repo24/bin/codex"
 
@@ -605,7 +622,7 @@ pr_number: 123
 EOF
 
 mkdir -p "$TEST_DIR/repo25/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo25/bin/codex"
 chmod +x "$TEST_DIR/repo25/bin/codex"
 
@@ -636,7 +653,7 @@ echo "symlink-plan.md" >> "$TEST_DIR/repo26/.gitignore"
 git -C "$TEST_DIR/repo26" add .gitignore && git -C "$TEST_DIR/repo26" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo26/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo26/bin/codex"
 chmod +x "$TEST_DIR/repo26/bin/codex"
 
@@ -664,7 +681,7 @@ echo "symlink-dir" >> "$TEST_DIR/repo27/.gitignore"
 git -C "$TEST_DIR/repo27" add .gitignore && git -C "$TEST_DIR/repo27" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo27/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo27/bin/codex"
 chmod +x "$TEST_DIR/repo27/bin/codex"
 
@@ -743,7 +760,7 @@ init_basic_git_repo "$TEST_DIR/repo30"
 # Create mock gh that fails auth check (to test dependency handling)
 mkdir -p "$TEST_DIR/repo30/bin"
 cat > "$TEST_DIR/repo30/bin/gh" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
     echo "Not logged in" >&2
     exit 1
@@ -839,7 +856,7 @@ REAL_GIT=$(command -v git)
 
 # Mock timeout that returns 124 for git rev-parse (first check in setup script)
 cat > "$TEST_DIR/repo34/bin/timeout" << TIMEOUTEOF
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock timeout that returns 124 for git rev-parse to simulate timeout
 if [[ "\$*" == *"git"*"rev-parse"* ]]; then
     exit 124
@@ -856,7 +873,7 @@ chmod +x "$TEST_DIR/repo34/bin/gtimeout"
 
 # Create mock codex
 cat > "$TEST_DIR/repo34/bin/codex" << 'CODEXEOF'
-#!/bin/bash
+#!/usr/bin/env bash
 exit 0
 CODEXEOF
 chmod +x "$TEST_DIR/repo34/bin/codex"
@@ -1023,7 +1040,7 @@ git -C "$TEST_DIR/repo42" add .gitignore && git -C "$TEST_DIR/repo42" commit -q 
 
 # Create mock codex
 mkdir -p "$TEST_DIR/repo42/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo42/bin/codex"
 chmod +x "$TEST_DIR/repo42/bin/codex"
 
@@ -1095,7 +1112,7 @@ printf 'plan.md\nbin/\n' >> "$TEST_DIR/repo45/.gitignore"
 git -C "$TEST_DIR/repo45" add .gitignore && git -C "$TEST_DIR/repo45" commit -q -m "Add gitignore"
 
 mkdir -p "$TEST_DIR/repo45/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo45/bin/codex"
 chmod +x "$TEST_DIR/repo45/bin/codex"
 
@@ -1131,13 +1148,14 @@ git -C "$TEST_DIR/repo46" add .gitignore && git -C "$TEST_DIR/repo46" commit -q 
 
 # Create bin dir with jq but no codex
 mkdir -p "$TEST_DIR/repo46/bin"
+prepare_runtime_bin "$TEST_DIR/repo46/bin"
 cat > "$TEST_DIR/repo46/bin/jq" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 exit 0
 EOF
 chmod +x "$TEST_DIR/repo46/bin/jq"
-# Hide system codex by making the only codex on PATH our empty bin dir
-OUTPUT=$(PATH="$TEST_DIR/repo46/bin:/usr/bin:/bin" run_rlcr_setup "$TEST_DIR/repo46" plan.md 2>&1) || EXIT_CODE=$?
+# Hide system codex by making the only codex on PATH our test bin dir
+OUTPUT=$(PATH="$TEST_DIR/repo46/bin" run_rlcr_setup "$TEST_DIR/repo46" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "Missing required dependencies" && echo "$OUTPUT" | grep -q "codex"; then
     pass "Missing codex detected in dependency check"
@@ -1160,13 +1178,14 @@ git -C "$TEST_DIR/repo47" add .gitignore && git -C "$TEST_DIR/repo47" commit -q 
 
 # Create bin dir with codex but no jq
 mkdir -p "$TEST_DIR/repo47/bin"
+prepare_runtime_bin "$TEST_DIR/repo47/bin"
 cat > "$TEST_DIR/repo47/bin/codex" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 exit 0
 EOF
 chmod +x "$TEST_DIR/repo47/bin/codex"
-# Use a restricted PATH that has git but no jq
-OUTPUT=$(PATH="$TEST_DIR/repo47/bin:/usr/bin:/bin" run_rlcr_setup "$TEST_DIR/repo47" plan.md 2>&1) || EXIT_CODE=$?
+# Use a restricted PATH with required runtime tools but no jq
+OUTPUT=$(PATH="$TEST_DIR/repo47/bin" run_rlcr_setup "$TEST_DIR/repo47" plan.md 2>&1) || EXIT_CODE=$?
 EXIT_CODE=${EXIT_CODE:-0}
 if [[ $EXIT_CODE -ne 0 ]] && echo "$OUTPUT" | grep -qi "Missing required dependencies" && echo "$OUTPUT" | grep -q "jq"; then
     pass "Missing jq detected in dependency check"
@@ -1231,10 +1250,10 @@ git -C "$TEST_DIR/repo49" add .gitignore && git -C "$TEST_DIR/repo49" commit -q 
 
 # Create mock codex and jq
 mkdir -p "$TEST_DIR/repo49/bin"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo49/bin/codex"
 chmod +x "$TEST_DIR/repo49/bin/codex"
-echo '#!/bin/bash
+echo '#!/usr/bin/env bash
 exit 0' > "$TEST_DIR/repo49/bin/jq"
 chmod +x "$TEST_DIR/repo49/bin/jq"
 

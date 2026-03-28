@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for unified codex_model/codex_effort configuration
 #
@@ -512,7 +512,7 @@ HOOK_STATE_EOF
     STUB_BIN="$TEST_DIR/stub-bin"
     mkdir -p "$STUB_BIN"
     cat > "$STUB_BIN/codex" << 'STUB_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 echo "CODEX_INVOKED" >> "$CODEX_INVOCATION_LOG"
 exit 0
 STUB_EOF
@@ -822,7 +822,7 @@ else
         PR_MOCK_BIN="$TEST_DIR/pr-mock-bin"
         mkdir -p "$PR_MOCK_BIN"
         cat > "$PR_MOCK_BIN/gh" << 'GH_MOCK_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock gh for setup-pr-loop.sh end-to-end test
 ALL_ARGS="$*"
 case "$1" in
@@ -861,7 +861,7 @@ GH_MOCK_EOF
 
         # Create mock codex (not called during setup, but required by command -v check)
         cat > "$PR_MOCK_BIN/codex" << 'CODEX_MOCK_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 exit 0
 CODEX_MOCK_EOF
         chmod +x "$PR_MOCK_BIN/codex"
@@ -915,7 +915,7 @@ else
     MOCK_BIN="$TEST_DIR/mock-bin"
     mkdir -p "$MOCK_BIN"
     cat > "$MOCK_BIN/codex" << 'MOCK_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 echo "mock codex response"
 exit 0
 MOCK_EOF

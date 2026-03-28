@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for --agent-teams feature in RLCR loop
 #
@@ -531,7 +531,7 @@ setup_mock_codex_impl_feedback() {
     local feedback="$1"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << MOCK_EOF
-#!/bin/bash
+#!/usr/bin/env bash
 subcommand=""
 for arg in "\$@"; do
     if [[ "\$arg" == "exec" || "\$arg" == "review" ]]; then
@@ -556,7 +556,7 @@ setup_mock_codex_review_issues() {
     local review_output="$1"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << MOCK_EOF
-#!/bin/bash
+#!/usr/bin/env bash
 subcommand=""
 for arg in "\$@"; do
     if [[ "\$arg" == "exec" || "\$arg" == "review" ]]; then

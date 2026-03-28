@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for legacy compatibility fixes in loop-codex-stop-hook.sh
 #
@@ -25,7 +25,7 @@ mkdir -p "$XDG_CACHE_HOME"
 setup_mock_codex() {
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << 'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 if [[ -n "${MOCK_CODEX_MARKER:-}" ]]; then
     : > "$MOCK_CODEX_MARKER"
 fi

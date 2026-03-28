@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for Finalize Phase feature
 #
@@ -55,7 +55,7 @@ setup_mock_codex() {
     local review_output="${2:-No issues found.}"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock codex - outputs the provided content
 subcommand=""
 for arg in "\$@"; do
@@ -86,7 +86,7 @@ setup_mock_codex_with_tracking() {
     local review_output="${2:-No issues found.}"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 # Track that codex was called
 echo "CODEX_WAS_CALLED" > "$TEST_DIR/codex_called.marker"
 subcommand=""
@@ -118,7 +118,7 @@ setup_mock_codex_review_failure() {
     local review_exit_code="${2:-1}"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock codex - fails on review command
 subcommand=""
 for arg in "\$@"; do
@@ -147,7 +147,7 @@ setup_mock_codex_review_empty_stdout() {
     local exec_output="$1"
     mkdir -p "$TEST_DIR/bin"
     cat > "$TEST_DIR/bin/codex" << EOF
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock codex - produces empty stdout on review
 subcommand=""
 for arg in "\$@"; do

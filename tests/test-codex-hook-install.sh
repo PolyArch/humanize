@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for Codex-native hook installation and merge behavior.
 #
@@ -38,7 +38,7 @@ COMMAND_BIN_DIR="$TEST_DIR/command-bin"
 mkdir -p "$FAKE_BIN" "$CODEX_HOME_DIR" "$COMMAND_BIN_DIR"
 
 cat > "$FAKE_BIN/codex" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then
@@ -298,7 +298,7 @@ UNSUPPORTED_HOME="$TEST_DIR/codex-home-unsupported"
 mkdir -p "$UNSUPPORTED_BIN" "$UNSUPPORTED_HOME"
 
 cat > "$UNSUPPORTED_BIN/codex" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then

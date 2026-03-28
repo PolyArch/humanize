@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Test script for refine-plan command structure, validator behavior, QA template coverage,
 # and AC-7 installation wiring coverage

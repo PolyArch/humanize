@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # validate-refine-plan-io.sh
 # Validates input and output paths for the refine-plan command
 # Exit codes:

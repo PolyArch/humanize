@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Tests for bitlesson-select.sh provider routing
 set -euo pipefail
 
@@ -69,7 +69,7 @@ create_mock_codex() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/codex" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock codex that only reads prompt content from stdin when invoked with trailing '-'
 if [[ "${*: -1}" != "-" ]]; then
     echo "mock codex expected trailing '-' to read prompt from stdin" >&2
@@ -96,7 +96,7 @@ create_recording_mock_codex() {
     local stdin_file="$2"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/codex" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 if [[ "\${*: -1}" != "-" ]]; then
     echo "mock codex expected trailing '-' to read prompt from stdin" >&2
     exit 9
@@ -121,7 +121,7 @@ create_mock_claude() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/claude" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 # Mock claude that outputs valid bitlesson-selector format
 # Consume stdin so the pipe does not break
 cat > /dev/null
@@ -325,7 +325,7 @@ NO_CODEX_BIN="$TEST_DIR/no-codex-bin"
 mkdir -p "$NO_CODEX_BIN"
 # Provide a stub claude so it does not interfere with the codex check
 cat > "$NO_CODEX_BIN/claude" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 exit 0
 EOF
 chmod +x "$NO_CODEX_BIN/claude"
@@ -361,7 +361,7 @@ NO_CLAUDE_BIN="$TEST_DIR/no-claude-bin"
 mkdir -p "$NO_CLAUDE_BIN"
 # Provide a stub codex that produces valid bitlesson output (proves fallback worked)
 cat > "$NO_CLAUDE_BIN/codex" <<'MOCK_EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 echo "LESSON_IDS: NONE"
 echo "RATIONALE: No relevant lessons for this task."
 MOCK_EOF
@@ -447,7 +447,7 @@ printf '{"bitlesson_model": "gpt-5.4"}' > "$TEST_DIR/.humanize/config.json"
 CAPTURE_BIN="$TEST_DIR/capture-bin"
 mkdir -p "$CAPTURE_BIN"
 cat > "$CAPTURE_BIN/codex" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 printf '%s\n' "$@" > "${TEST_CAPTURE_ARGS:?}"
 cat > /dev/null
 cat <<'OUT'

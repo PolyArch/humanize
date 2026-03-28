@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Ensure Humanize's nested Codex reviewer calls disable native hooks to avoid recursion.
 #
@@ -70,7 +70,7 @@ setup_mock_codex() {
 
     mkdir -p "$bin_dir"
     cat > "$bin_dir/codex" <<EOF
-#!/bin/bash
+#!/usr/bin/env bash
 printf '%s\n' "\$*" > "$args_file"
 
 subcommand=""

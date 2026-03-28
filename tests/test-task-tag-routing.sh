@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Tests for task-tag routing in RLCR loop prompts
 #
@@ -27,7 +27,7 @@ create_mock_codex() {
     local exec_output="${2:-Need follow-up work}"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/codex" << MOCK_EOF
-#!/bin/bash
+#!/usr/bin/env bash
 subcommand=""
 for arg in "\$@"; do
     if [[ "\$arg" == "exec" || "\$arg" == "review" ]]; then
