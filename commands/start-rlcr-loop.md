@@ -127,6 +127,15 @@ This command starts an iterative development loop where:
 7. If code review finds issues (`[P0-9]` markers), you fix them and continue
 8. When no issues are found, the loop ends with a Finalize Phase
 
+## What Is a Round
+
+**One round = the agent believes the entire plan is finished.** A round boundary is when the agent writes a summary and attempts to exit, triggering Codex review. This is the fundamental semantic:
+
+- A round is NOT one task, one milestone, one stage, or one layer of the plan.
+- If the plan has multiple stages or milestones, they are all completed within a single round before writing the round summary.
+- Intermediate progress checks (e.g., verifying a stage before starting the next) should use manual `ask-codex` calls, not round boundaries.
+- Only write `round-N-summary.md` and attempt to exit when you believe ALL tasks in the plan are done.
+
 ## Goal Tracker System
 
 This loop uses a **Goal Tracker** to prevent goal drift across iterations:
