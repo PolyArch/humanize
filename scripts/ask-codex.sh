@@ -234,6 +234,7 @@ $QUESTION
 - Effort: $CODEX_EFFORT
 - Timeout: ${CODEX_TIMEOUT}s
 - Timestamp: $TIMESTAMP
+- Tool: codex
 EOF
 
 # ========================================
@@ -317,6 +318,7 @@ if [[ $CODEX_EXIT_CODE -eq 124 ]]; then
     # Save metadata even on timeout
     cat > "$SKILL_DIR/metadata.md" << EOF
 ---
+tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
 timeout: $CODEX_TIMEOUT
@@ -343,6 +345,7 @@ if [[ $CODEX_EXIT_CODE -ne 0 ]]; then
     # Save metadata
     cat > "$SKILL_DIR/metadata.md" << EOF
 ---
+tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
 timeout: $CODEX_TIMEOUT
@@ -368,6 +371,7 @@ if [[ ! -s "$CODEX_STDOUT_FILE" ]]; then
 
     cat > "$SKILL_DIR/metadata.md" << EOF
 ---
+tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
 timeout: $CODEX_TIMEOUT
@@ -390,6 +394,7 @@ cp "$CODEX_STDOUT_FILE" "$SKILL_DIR/output.md"
 # Save metadata
 cat > "$SKILL_DIR/metadata.md" << EOF
 ---
+tool: codex
 model: $CODEX_MODEL
 effort: $CODEX_EFFORT
 timeout: $CODEX_TIMEOUT

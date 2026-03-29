@@ -1182,13 +1182,21 @@ humanize() {
                 skill)
                     _humanize_monitor_skill "$@"
                     ;;
+                codex)
+                    _humanize_monitor_skill --tool-filter codex "$@"
+                    ;;
+                gemini)
+                    _humanize_monitor_skill --tool-filter gemini "$@"
+                    ;;
                 *)
-                    echo "Usage: humanize monitor <rlcr|pr|skill>"
+                    echo "Usage: humanize monitor <rlcr|pr|skill|codex|gemini>"
                     echo ""
                     echo "Subcommands:"
                     echo "  rlcr    Monitor the latest RLCR loop log from .humanize/rlcr"
                     echo "  pr      Monitor the latest PR loop from .humanize/pr-loop"
-                    echo "  skill   Monitor ask-codex skill invocations from .humanize/skill"
+                    echo "  skill   Monitor all skill invocations (codex + gemini)"
+                    echo "  codex   Monitor ask-codex skill invocations only"
+                    echo "  gemini  Monitor ask-gemini skill invocations only"
                     echo ""
                     echo "Features:"
                     echo "  - Fixed status bar showing session info, round progress, model config"
@@ -1205,7 +1213,9 @@ humanize() {
             echo "Commands:"
             echo "  monitor rlcr    Monitor the latest RLCR loop log"
             echo "  monitor pr      Monitor the latest PR loop"
-            echo "  monitor skill   Monitor ask-codex skill invocations"
+            echo "  monitor skill   Monitor all skill invocations (codex + gemini)"
+            echo "  monitor codex   Monitor ask-codex skill invocations only"
+            echo "  monitor gemini  Monitor ask-gemini skill invocations only"
             return 1
             ;;
     esac

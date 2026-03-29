@@ -55,10 +55,18 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
    /humanize:start-rlcr-loop docs/plan.md
    ```
 
-4. **Monitor progress**:
+4. **Consult Gemini** for deep web research (requires Gemini CLI):
+   ```bash
+   /humanize:ask-gemini What are the latest best practices for X?
+   ```
+
+5. **Monitor progress**:
    ```bash
    source <path/to/humanize>/scripts/humanize.sh
-   humanize monitor rlcr
+   humanize monitor rlcr       # RLCR loop
+   humanize monitor skill      # All skill invocations (codex + gemini)
+   humanize monitor codex      # Codex invocations only
+   humanize monitor gemini     # Gemini invocations only
    ```
 
 ## Monitor Dashboard
