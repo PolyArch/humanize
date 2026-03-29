@@ -1063,11 +1063,17 @@ mkdir -p "$CACHE_DIR"
 # portable-timeout.sh already sourced above
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-# Probe whether the installed Codex CLI supports --disable; fall back to empty args
+# Probe whether the installed Codex CLI supports --disable; cache the result per loop
 # so older builds do not fail with an unknown-argument error.
 CODEX_DISABLE_HOOKS_ARGS=()
-if codex --help 2>&1 | grep -q -- '--disable'; then
+_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
+if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
+    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+elif codex --help 2>&1 | grep -q -- '--disable'; then
     CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+else
+    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
 fi
 
 # Build command arguments for summary review (codex exec)

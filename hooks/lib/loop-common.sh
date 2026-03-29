@@ -532,6 +532,7 @@ parse_state_file_strict() {
     STATE_FULL_REVIEW_ROUND="${STATE_FULL_REVIEW_ROUND:-5}"
     STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-true}"
     STATE_AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
+    STATE_PRIVACY_MODE="${STATE_PRIVACY_MODE:-true}"
     STATE_MAINLINE_STALL_COUNT="${STATE_MAINLINE_STALL_COUNT:-0}"
     STATE_LAST_MAINLINE_VERDICT="${STATE_LAST_MAINLINE_VERDICT:-$MAINLINE_VERDICT_UNKNOWN}"
     STATE_DRIFT_STATUS="${STATE_DRIFT_STATUS:-$DRIFT_STATUS_NORMAL}"
@@ -585,7 +586,9 @@ extract_mainline_progress_verdict() {
         return
     fi
 
-    verdict_value=$(printf '%s\n' "$verdict_line" | sed -E 's/.*Mainline Progress Verdict:[[:space:]]*(ADVANCED|STALLED|REGRESSED).*/\1/I')
+    # Extract the verdict word using grep -oEi (portable) instead of sed /I (GNU-only).
+    # The preceding grep -Ei already ensures the line contains one of the three verdicts.
+    verdict_value=$(printf '%s\n' "$verdict_line" | grep -oEi 'ADVANCED|STALLED|REGRESSED' | tail -1)
     normalize_mainline_progress_verdict "$verdict_value"
 }
 
@@ -602,9 +605,11 @@ upsert_state_fields() {
         BEGIN {
             count = split(assignments, pairs, " ");
             for (i = 1; i <= count; i++) {
-                split(pairs[i], kv, "=");
-                keys[kv[1]] = kv[2];
-                order[i] = kv[1];
+                eq = index(pairs[i], "=");
+                key = substr(pairs[i], 1, eq - 1);
+                val = substr(pairs[i], eq + 1);
+                keys[key] = val;
+                order[i] = key;
             }
             separator_count = 0;
         }
