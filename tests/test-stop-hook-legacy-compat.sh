@@ -163,6 +163,11 @@ echo "Test 1b: Untracked .humanizeconfig still blocks dirty checks"
 TEST1B_REPO="$TEST_DIR/test1b"
 create_stop_hook_fixture "$TEST1B_REPO"
 touch "$TEST1B_REPO/.humanizeconfig"
+# Also create a .humanize-old directory to trigger the "Special Case" note.
+# The .humanize/ directory itself may be covered by a global gitignore
+# so it might not appear as untracked; .humanize-old/ is never globally ignored.
+mkdir -p "$TEST1B_REPO/.humanize-old"
+echo "legacy" > "$TEST1B_REPO/.humanize-old/legacy.txt"
 run_stop_hook "$TEST1B_REPO"
 
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && \

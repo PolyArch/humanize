@@ -1335,7 +1335,12 @@ if [[ "${HUMANIZE_CODEX_BYPASS_SANDBOX:-}" == "true" ]] || [[ "${HUMANIZE_CODEX_
 fi
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+# Probe whether the installed Codex CLI supports --disable; fall back to empty args
+# so older builds do not fail with an unknown-argument error.
+CODEX_DISABLE_HOOKS_ARGS=()
+if codex --help 2>&1 | grep -q -- '--disable'; then
+    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+fi
 
 CODEX_ARGS+=("$CODEX_AUTO_FLAG" "-C" "$PROJECT_ROOT")
 

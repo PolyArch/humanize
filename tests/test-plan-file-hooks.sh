@@ -130,6 +130,9 @@ plan_tracked: false
 start_branch: $CURRENT_BRANCH
 base_branch: $CURRENT_BRANCH
 review_started: false
+mainline_stall_count: 0
+last_mainline_verdict: unknown
+drift_status: normal
 ---
 EOF
 

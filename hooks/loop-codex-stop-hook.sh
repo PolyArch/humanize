@@ -757,7 +757,10 @@ fi
 # Check Round Contract Exists
 # ========================================
 
-if [[ "$IS_FINALIZE_PHASE" != "true" ]]; then
+# Only enforce round contract when anti-drift is active (drift_status present in raw state).
+# Legacy loops that pre-date the anti-drift feature will not have this field.
+RAW_DRIFT_STATUS=$(echo "$RAW_FRONTMATTER" | grep "^drift_status:" || true)
+if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ -n "$RAW_DRIFT_STATUS" ]]; then
     if [[ ! -f "$ROUND_CONTRACT_FILE" ]]; then
         FALLBACK="# Round Contract Missing
 
@@ -1060,7 +1063,12 @@ mkdir -p "$CACHE_DIR"
 # portable-timeout.sh already sourced above
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+# Probe whether the installed Codex CLI supports --disable; fall back to empty args
+# so older builds do not fail with an unknown-argument error.
+CODEX_DISABLE_HOOKS_ARGS=()
+if codex --help 2>&1 | grep -q -- '--disable'; then
+    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
+fi
 
 # Build command arguments for summary review (codex exec)
 CODEX_EXEC_ARGS=("-m" "$CODEX_EXEC_MODEL")
