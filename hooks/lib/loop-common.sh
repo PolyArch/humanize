@@ -588,7 +588,17 @@ extract_mainline_progress_verdict() {
 
     # Extract the verdict word using grep -oEi (portable) instead of sed /I (GNU-only).
     # The preceding grep -Ei already ensures the line contains one of the three verdicts.
-    verdict_value=$(printf '%s\n' "$verdict_line" | grep -oEi 'ADVANCED|STALLED|REGRESSED' | head -1)
+    # Reject lines with multiple verdict keywords (e.g. placeholder template formats)
+    # to avoid silently accepting an ambiguous verdict.
+    local _verdict_matches
+    _verdict_matches=$(printf '%s\n' "$verdict_line" | grep -oEi 'ADVANCED|STALLED|REGRESSED')
+    local _match_count
+    _match_count=$(printf '%s\n' "$_verdict_matches" | wc -l)
+    if [[ "$_match_count" -gt 1 ]]; then
+        echo "$MAINLINE_VERDICT_UNKNOWN"
+        return
+    fi
+    verdict_value=$(printf '%s\n' "$_verdict_matches" | head -1)
     normalize_mainline_progress_verdict "$verdict_value"
 }
 

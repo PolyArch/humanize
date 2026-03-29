@@ -142,7 +142,7 @@ QUESTION="${QUESTION_PARTS[*]}"
 if ! command -v gemini &>/dev/null; then
     echo "Error: 'gemini' command is not installed or not in PATH" >&2
     echo "" >&2
-    echo "Please install Gemini CLI: npm install -g @anthropic-ai/gemini-cli  or  https://github.com/anthropics/gemini-cli" >&2
+    echo "Please install Gemini CLI: npm install -g @google/gemini-cli  or  https://github.com/google-gemini/gemini-cli" >&2
     echo "Then retry: /humanize:ask-gemini <your question>" >&2
     exit 1
 fi
