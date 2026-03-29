@@ -343,18 +343,23 @@ install_bitlesson_selector_shim() {
 
     mkdir -p "$COMMAND_BIN_DIR"
 
-    cat > "$shim_path" <<EOF
+    # Escape paths for safe embedding in the generated script.
+    # Use single-quoted strings so shell metacharacters in paths are inert.
+    _escaped_primary=$(printf '%s' "$primary_runtime_root" | sed "s/'/'\\\\''/g")
+
+    cat > "$shim_path" <<SHIM_EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 candidate_paths=(
-  "$primary_runtime_root/scripts/bitlesson-select.sh"
-EOF
+  '${_escaped_primary}/scripts/bitlesson-select.sh'
+SHIM_EOF
 
     if [[ -n "$secondary_runtime_root" ]]; then
-        cat >> "$shim_path" <<EOF
-  "$secondary_runtime_root/scripts/bitlesson-select.sh"
-EOF
+        _escaped_secondary=$(printf '%s' "$secondary_runtime_root" | sed "s/'/'\\\\''/g")
+        cat >> "$shim_path" <<SHIM_EOF
+  '${_escaped_secondary}/scripts/bitlesson-select.sh'
+SHIM_EOF
     fi
 
     cat >> "$shim_path" <<'EOF'

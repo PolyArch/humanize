@@ -102,7 +102,10 @@ template_file = pathlib.Path(sys.argv[2])
 runtime_root = sys.argv[3]
 
 template_text = template_file.read_text(encoding="utf-8")
-template_text = template_text.replace("{{HUMANIZE_RUNTIME_ROOT}}", runtime_root)
+# JSON-escape the runtime root so metacharacters (quotes, backslashes) do not
+# corrupt the template before json.loads parses it.
+escaped_root = json.dumps(runtime_root)[1:-1]  # strip outer quotes from dumps output
+template_text = template_text.replace("{{HUMANIZE_RUNTIME_ROOT}}", escaped_root)
 template = json.loads(template_text)
 
 existing = {}

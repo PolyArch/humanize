@@ -888,7 +888,8 @@ goal_tracker_mutable_update_allowed() {
     current_immutable=$(extract_goal_tracker_immutable_from_file "$tracker_file" 2>/dev/null || true)
     updated_immutable=$(extract_goal_tracker_immutable_from_text "$updated_content" 2>/dev/null || true)
 
-    [[ -n "$current_immutable" ]] || return 1
+    # Legacy trackers without IMMUTABLE SECTION: allow edits unconditionally.
+    [[ -n "$current_immutable" ]] || return 0
     [[ "$current_immutable" == "$updated_immutable" ]]
 }
 
