@@ -45,7 +45,7 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
    /humanize:gen-plan --input draft.md --output docs/plan.md
    ```
 
-2. **Refine an annotated plan** before implementation when reviewers add `CMT:` ... `ENDCMT` comments:
+2. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):
    ```bash
    /humanize:refine-plan --input docs/plan.md
    ```

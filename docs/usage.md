@@ -46,7 +46,7 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
    ```bash
    /humanize:gen-plan --input draft.md --output docs/plan.md
    ```
-2. If the plan is reviewed with `CMT:` ... `ENDCMT` annotations, refine it and generate a QA ledger:
+2. If the plan is reviewed with comment annotations, refine it and generate a QA ledger:
    ```bash
    /humanize:refine-plan --input docs/plan.md
    ```
@@ -127,7 +127,7 @@ Workflow:
 5. Generates a structured plan.md with acceptance criteria
 6. Optionally starts `/humanize:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
 
-If reviewers later annotate the generated plan with `CMT:` ... `ENDCMT` blocks, run
+If reviewers later annotate the generated plan with comment blocks, run
 `/humanize:refine-plan --input <plan.md>` before starting or resuming implementation.
 
 ### refine-plan
@@ -169,9 +169,10 @@ how each comment was handled.
 
 **Annotated comment block format:**
 
-`refine-plan` looks for reviewer comments wrapped in `CMT:` and `ENDCMT` markers. Both inline
-and multi-line comment blocks are supported:
+`refine-plan` supports three comment formats for reviewer annotations. Both inline
+and multi-line comment blocks are supported in all formats:
 
+**Classic format (CMT:/ENDCMT):**
 ```markdown
 Text before CMT: clarify why AC-3 is split here ENDCMT text after
 ```
@@ -183,11 +184,36 @@ If the dependency is unclear, add a pending decision instead of guessing.
 ENDCMT
 ```
 
+**Short tag format (<cmt></cmt>):**
+```markdown
+Text before <cmt>clarify why AC-3 is split here</cmt> text after
+```
+
+```markdown
+<cmt>
+Please investigate whether this task should depend on task4 or task5.
+If the dependency is unclear, add a pending decision instead of guessing.
+</cmt>
+```
+
+**Long tag format (<comment></comment>):**
+```markdown
+Text before <comment>clarify why AC-3 is split here</comment> text after
+```
+
+```markdown
+<comment>
+Please investigate whether this task should depend on task4 or task5.
+If the dependency is unclear, add a pending decision instead of guessing.
+</comment>
+```
+
 Rules:
-- At least one non-empty `CMT:` block must exist in the input file.
-- `CMT:` and `ENDCMT` markers inside fenced code blocks or HTML comments are ignored.
+- At least one non-empty comment block must exist in the input file.
+- Comment markers inside fenced code blocks or HTML comments are ignored.
 - Empty comment blocks are removed but do not create QA ledger entries.
 - The input plan must still follow the `gen-plan` section schema.
+- All three formats can be mixed within the same file.
 
 **QA output structure:**
 
