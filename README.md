@@ -25,6 +25,7 @@ A Claude Code plugin that provides iterative development with independent AI rev
 
 The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
 
+
 ## Install
 
 ```bash
