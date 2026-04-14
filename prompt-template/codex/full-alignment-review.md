@@ -16,6 +16,8 @@ You MUST read this plan file first to understand the full scope of work before c
 <!-- CLAUDE's WORK SUMMARY  END  -->
 ---
 
+{{COMMIT_HISTORY_SECTION}}
+
 ## Part 1: Goal Tracker Audit (MANDATORY)
 
 Read @{{GOAL_TRACKER_FILE}} and verify:

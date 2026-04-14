@@ -965,6 +965,37 @@ COMPLETED_ITERATIONS=$((CURRENT_ROUND + 1))
 PREV_ROUND=$(( CURRENT_ROUND > 0 ? CURRENT_ROUND - 1 : 0 ))
 PREV_PREV_ROUND=$(( CURRENT_ROUND > 1 ? CURRENT_ROUND - 2 : 0 ))
 
+# Integral component: accumulated commit history and recent round references
+# Validate BASE_COMMIT is an ancestor of HEAD (not just a valid object) before using it in git log
+if [[ -n "$BASE_COMMIT" ]] && git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BASE_COMMIT" HEAD 2>/dev/null; then
+    COMMIT_HISTORY=$(git -C "$PROJECT_ROOT" log --oneline --no-decorate --reverse "$BASE_COMMIT"..HEAD 2>/dev/null | tail -80)
+else
+    COMMIT_HISTORY=$(git -C "$PROJECT_ROOT" log --oneline --no-decorate --reverse -30 2>/dev/null)
+    # Annotate so Codex knows this is not the full loop history
+    [[ -n "$COMMIT_HISTORY" ]] && COMMIT_HISTORY="(base commit unavailable, showing recent branch commits)
+${COMMIT_HISTORY}"
+fi
+[[ -z "$COMMIT_HISTORY" ]] && COMMIT_HISTORY="(no commits yet)"
+
+RECENT_ROUND_FILES=""
+for (( r = CURRENT_ROUND - 1; r >= 0 && r >= CURRENT_ROUND - 3; r-- )); do
+    RECENT_ROUND_FILES+="- @.humanize/rlcr/${LOOP_TIMESTAMP}/round-${r}-summary.md
+- @.humanize/rlcr/${LOOP_TIMESTAMP}/round-${r}-review-result.md
+"
+done
+[[ -z "$RECENT_ROUND_FILES" ]] && RECENT_ROUND_FILES="(first round, no prior history)"
+
+COMMIT_HISTORY_SECTION_FALLBACK="## Development History (Integral Context)
+\`\`\`
+${COMMIT_HISTORY}
+\`\`\`
+### Recent Round Files
+Read these files before conducting your review to understand the trajectory of work:
+${RECENT_ROUND_FILES}"
+COMMIT_HISTORY_SECTION=$(load_and_render_safe "$TEMPLATE_DIR" "codex/commit-history-section.md" "$COMMIT_HISTORY_SECTION_FALLBACK" \
+    "COMMIT_HISTORY=$COMMIT_HISTORY" \
+    "RECENT_ROUND_FILES=$RECENT_ROUND_FILES")
+
 # Build the review prompt
 FULL_ALIGNMENT_FALLBACK="# Full Alignment Review (Round {{CURRENT_ROUND}})
 
@@ -972,6 +1003,8 @@ Review Claude's work against the plan and goal tracker. Check all goals are bein
 
 ## Claude's Summary
 {{SUMMARY_CONTENT}}
+
+{{COMMIT_HISTORY_SECTION}}
 
 {{GOAL_TRACKER_UPDATE_SECTION}}
 
@@ -983,6 +1016,8 @@ Review Claude's work for this round.
 
 ## Claude's Summary
 {{SUMMARY_CONTENT}}
+
+{{COMMIT_HISTORY_SECTION}}
 
 {{GOAL_TRACKER_UPDATE_SECTION}}
 
@@ -997,6 +1032,7 @@ if [[ "$FULL_ALIGNMENT_CHECK" == "true" ]]; then
         "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" \
         "DOCS_PATH=$DOCS_PATH" \
         "GOAL_TRACKER_UPDATE_SECTION=$GOAL_TRACKER_UPDATE_SECTION" \
+        "COMMIT_HISTORY_SECTION=$COMMIT_HISTORY_SECTION" \
         "COMPLETED_ITERATIONS=$COMPLETED_ITERATIONS" \
         "LOOP_TIMESTAMP=$LOOP_TIMESTAMP" \
         "PREV_ROUND=$PREV_ROUND" \
@@ -1013,6 +1049,7 @@ else
         "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" \
         "DOCS_PATH=$DOCS_PATH" \
         "GOAL_TRACKER_UPDATE_SECTION=$GOAL_TRACKER_UPDATE_SECTION" \
+        "COMMIT_HISTORY_SECTION=$COMMIT_HISTORY_SECTION" \
         "COMPLETED_ITERATIONS=$COMPLETED_ITERATIONS" \
         "LOOP_TIMESTAMP=$LOOP_TIMESTAMP" \
         "PREV_ROUND=$PREV_ROUND" \
