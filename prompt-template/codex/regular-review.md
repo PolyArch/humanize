@@ -17,6 +17,8 @@ Below is Claude's summary of the work completed:
 <!-- CLAUDE's WORK SUMMARY  END  -->
 ---
 
+{{COMMIT_HISTORY_SECTION}}
+
 ## Part 1: Implementation Review
 
 - Your task is to conduct a deep critical review, focusing on finding implementation issues and identifying gaps between "plan-design" and actual implementation.
