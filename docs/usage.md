@@ -313,7 +313,7 @@ Set up the monitoring helper for real-time progress tracking:
 
 ```bash
 # Add to your .bashrc or .zshrc
-source ~/.claude/plugins/cache/humania/humanize/<LATEST.VERSION>/scripts/humanize.sh
+source ~/.claude/plugins/cache/PolyArch/humanize/<LATEST.VERSION>/scripts/humanize.sh
 
 # Monitor RLCR loop progress
 humanize monitor rlcr

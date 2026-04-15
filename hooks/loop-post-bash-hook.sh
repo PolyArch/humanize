@@ -67,7 +67,7 @@ if [[ -n "$COMMAND_SIGNATURE" ]]; then
         exit 0
     fi
 
-    # Normalize consecutive slashes (e.g. "humania//scripts" -> "humania/scripts").
+    # Normalize consecutive slashes (e.g. "PolyArch//scripts" -> "PolyArch/scripts").
     # CLAUDE_PLUGIN_ROOT may have a trailing slash, producing double slashes when
     # concatenated with "/scripts/..." in the command template. The setup script
     # normalizes its own path via cd+pwd (removing double slashes), but the
