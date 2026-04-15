@@ -30,9 +30,9 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 
 ```bash
 # Add humania marketplace
-/plugin marketplace add humania-org/humanize
+/plugin marketplace add PolyArch/humanize
 # If you want to use development branch for experimental features
-/plugin marketplace add humania-org/humanize#dev
+/plugin marketplace add PolyArch/humanize#dev
 # Then install humanize plugin
 /plugin install humanize@humania
 ```
