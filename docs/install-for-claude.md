@@ -15,7 +15,7 @@ Start Claude Code and run:
 /plugin marketplace add git@github.com:PolyArch/humanize.git
 
 # Install the plugin
-/plugin install humanize@humania
+/plugin install humanize@PolyArch
 ```
 
 ## Option 2: Local Development
@@ -61,7 +61,7 @@ Add the monitoring helper to your shell for real-time progress tracking:
 
 ```bash
 # Add to your .bashrc or .zshrc
-source ~/.claude/plugins/cache/humania/humanize/<LATEST.VERSION>/scripts/humanize.sh
+source ~/.claude/plugins/cache/PolyArch/humanize/<LATEST.VERSION>/scripts/humanize.sh
 ```
 
 Then use:

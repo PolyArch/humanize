@@ -1,6 +1,6 @@
 # Humanize
 
-**Current Version: 1.15.3**
+**Current Version: 1.15.4**
 
 > Derived from the [GAAC (GitHub-as-a-Context)](https://github.com/SihaoLiu/gaac) project.
 
@@ -28,12 +28,12 @@ The loop has two phases: **Implementation** (Claude works, Codex reviews summari
 ## Install
 
 ```bash
-# Add humania marketplace
+# Add PolyArch marketplace
 /plugin marketplace add PolyArch/humanize
 # If you want to use development branch for experimental features
 /plugin marketplace add PolyArch/humanize#dev
 # Then install humanize plugin
-/plugin install humanize@humania
+/plugin install humanize@PolyArch
 ```
 
 Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites and alternative setup options.
