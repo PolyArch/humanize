@@ -7,7 +7,7 @@ This guide explains how to install the Humanize skills for Codex skill runtime (
 One-line install from anywhere:
 
 ```bash
-tmp_dir="$(mktemp -d)" && git clone --depth 1 https://github.com/humania-org/humanize.git "$tmp_dir/humanize" && "$tmp_dir/humanize/scripts/install-skills-codex.sh"
+tmp_dir="$(mktemp -d)" && git clone --depth 1 https://github.com/PolyArch/humanize.git "$tmp_dir/humanize" && "$tmp_dir/humanize/scripts/install-skills-codex.sh"
 ```
 
 From the Humanize repo root:

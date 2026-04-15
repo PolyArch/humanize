@@ -3,10 +3,10 @@
   "description": "Humanize - An iterative development plugin that uses Codex to review Claude's work. Creates a feedback loop where Claude implements plans and Codex independently reviews progress, ensuring quality through continuous refinement.",
   "version": "1.15.2",
   "author": {
-    "name": "humania-org"
+    "name": "PolyArch"
   },
-  "repository": "https://github.com/humania-org/humanize",
-  "homepage": "https://github.com/humania-org/humanize#readme",
+  "repository": "https://github.com/PolyArch/humanize",
+  "homepage": "https://github.com/PolyArch/humanize#readme",
   "license": "MIT",
   "keywords": [
     "iterative-development",

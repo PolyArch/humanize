@@ -12,7 +12,7 @@ Start Claude Code and run:
 
 ```bash
 # Add the marketplace
-/plugin marketplace add git@github.com:humania-org/humanize.git
+/plugin marketplace add git@github.com:PolyArch/humanize.git
 
 # Install the plugin
 /plugin install humanize@humania
@@ -31,7 +31,7 @@ claude --plugin-dir /path/to/humanize
 The `dev` branch contains experimental features that are not yet released to `main`. To try them locally:
 
 ```bash
-git clone https://github.com/humania-org/humanize.git
+git clone https://github.com/PolyArch/humanize.git
 cd humanize
 git checkout dev
 ```
