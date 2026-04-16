@@ -33,18 +33,17 @@ GATE_SCRIPT="$PROJECT_ROOT/scripts/rlcr-stop-gate.sh"
 
 setup_test_dir
 
-# AC-10 needs a transcript living under $HOME so the hook input can use
-# the "~/..." form. Create the fixture dir in the AC-10 block and extend
-# the EXIT trap set by setup_test_dir to clean both directories on shutdown.
-HOME_FIXTURE_DIR=""
-cleanup_all() {
-    rm -rf "$TEST_DIR"
-    [[ -n "$HOME_FIXTURE_DIR" ]] && rm -rf "$HOME_FIXTURE_DIR"
-}
-trap cleanup_all EXIT
-
 export XDG_CACHE_HOME="$TEST_DIR/.cache"
 mkdir -p "$XDG_CACHE_HOME"
+
+# Fake HOME rooted inside $TEST_DIR so the tilde-path regressions (AC-10,
+# AC-10b, AC-10c) do not write into the real user home. The hook, helper,
+# and wrapper invocations that need tilde expansion run with HOME set to
+# this directory; every other invocation keeps the real HOME. Cleanup is
+# covered by the setup_test_dir EXIT trap because FAKE_HOME is under
+# $TEST_DIR.
+FAKE_HOME="$TEST_DIR/fake-home"
+mkdir -p "$FAKE_HOME"
 
 # ----------------------------------------------------------------------
 # Mock codex CLI: records an invocation marker and prints canned feedback.
@@ -226,11 +225,14 @@ write_transcript() {
 }
 
 # ----------------------------------------------------------------------
-# Invoke the stop hook with a crafted hook input JSON.
+# Invoke the stop hook with a crafted hook input JSON. The optional third
+# argument overrides HOME for the hook invocation only, so tilde-path
+# regressions can point at a fake HOME rooted under $TEST_DIR without
+# leaking into the real user home.
 # Sets RUN_EXIT_CODE, RUN_OUTPUT, RUN_MARKER.
 # ----------------------------------------------------------------------
 run_stop_hook_with_input() {
-    local repo_dir="$1" hook_input_json="$2"
+    local repo_dir="$1" hook_input_json="$2" home_override="${3:-}"
 
     RUN_MARKER="$repo_dir/codex-called.marker"
     rm -f "$RUN_MARKER"
@@ -238,6 +240,7 @@ run_stop_hook_with_input() {
     set +e
     RUN_OUTPUT=$(
         cd "$repo_dir"
+        [[ -n "$home_override" ]] && export HOME="$home_override"
         CLAUDE_PROJECT_DIR="$repo_dir" \
         MOCK_CODEX_MARKER="$RUN_MARKER" \
         MOCK_CODEX_OUTPUT="Mock review feedback" \
@@ -473,33 +476,40 @@ else
         "exit $AC9_EXIT; output: $AC9_BODY"
 fi
 
-# ---------------- AC-10 ----------------
+# ---------------- AC-10 / AC-10b / AC-10c ----------------
 # Regression: real sessions pass transcript_path as "~/.claude/projects/...".
 # Without tilde expansion the file check `[[ -f "~/..." ]]` is always false,
 # so the short-circuit silently misses pending background tasks.
+#
+# The fixture lives under a fake HOME rooted inside $TEST_DIR so the tests
+# remain portable on sandboxed or read-only-HOME environments. Only the
+# specific hook / helper / wrapper invocations that need tilde expansion
+# run with HOME=$FAKE_HOME; the rest of the suite keeps the real HOME.
 echo "Test AC-10: '~/...' transcript path still triggers short-circuit"
 AC10_REPO="$TEST_DIR/ac10"
 AC10_LOOP=$(create_full_fixture "$AC10_REPO")
 AC10_STATE="$AC10_LOOP/state.md"
 
-HOME_FIXTURE_DIR=$(mktemp -d "$HOME/.humanize-bg-allow-test-XXXXXX")
-AC10_TRANSCRIPT="$HOME_FIXTURE_DIR/ac10.jsonl"
+mkdir -p "$FAKE_HOME/session-data"
+AC10_TRANSCRIPT="$FAKE_HOME/session-data/ac10.jsonl"
 AC10_LAUNCH=$(emit_tool_use_assistant "toolu_H" "Agent" ',"description":"x","prompt":"x"')
 AC10_RESULT=$(emit_async_agent_launch_result "toolu_H" "agent_pending_H")
 write_transcript "$AC10_TRANSCRIPT" "$AC10_LAUNCH" "$AC10_RESULT"
 
 # Build the tilde-form string literally. Do NOT let the shell expand "~".
-AC10_TILDE_PATH="~/${AC10_TRANSCRIPT#$HOME/}"
+AC10_TILDE_PATH="~/session-data/ac10.jsonl"
 AC10_INPUT=$(jq -c -n --arg tp "$AC10_TILDE_PATH" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC10_REPO" "$AC10_INPUT"
+run_stop_hook_with_input "$AC10_REPO" "$AC10_INPUT" "$FAKE_HOME"
 assert_systemmessage_only \
     "AC-10: '~/'-prefixed transcript_path is expanded and short-circuits on pending bg" \
     "$AC10_REPO" "$AC10_STATE" "1 background task"
 
-# Also prove the helper works directly against a "~/..." argument.
-# This avoids masking a helper regression behind the hook's own expansion.
+# Also prove the helper works directly against a "~/..." argument under a
+# fake HOME. Avoids masking a helper regression behind the hook's own
+# normalization.
 AC10_HELPER_OUT=$(
     cd "$AC10_REPO"
+    HOME="$FAKE_HOME"
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
     list_pending_background_task_ids "$AC10_TILDE_PATH" 2>/dev/null | sort -u
@@ -509,6 +519,30 @@ if printf '%s\n' "$AC10_HELPER_OUT" | grep -qx 'agent_pending_H'; then
 else
     fail "AC-10b: list_pending_background_task_ids expands '~/...' directly" \
         "output containing 'agent_pending_H'" "$AC10_HELPER_OUT"
+fi
+
+# Verify the gate wrapper path with a tilde-form --transcript-path also
+# reaches the short-circuit. AC-9 uses an absolute transcript path; this
+# covers the same code path with a "~/..." form.
+echo "Test AC-10c: rlcr-stop-gate.sh with '~/...' --transcript-path -> ALLOW"
+AC10C_OUT="$TEST_DIR/ac10c-out.txt"
+set +e
+(
+    cd "$AC10_REPO"
+    HOME="$FAKE_HOME" "$GATE_SCRIPT" --transcript-path "$AC10_TILDE_PATH"
+) > "$AC10C_OUT" 2>&1
+AC10C_EXIT=$?
+set -e
+
+if [[ "$AC10C_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$AC10C_OUT" \
+   && grep -q "background task" "$AC10C_OUT"; then
+    pass "AC-10c: rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage"
+else
+    AC10C_BODY=$(cat "$AC10C_OUT" 2>/dev/null || true)
+    fail "AC-10c: rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage" \
+        "exit 0 + output containing ALLOW: and 'background task'" \
+        "exit $AC10C_EXIT; output: $AC10C_BODY"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
