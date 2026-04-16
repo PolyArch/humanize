@@ -267,6 +267,31 @@ extract_transcript_path() {
     expand_leading_tilde "$raw"
 }
 
+# Convert an RLCR loop dir basename to a lexically-comparable ISO-8601
+# timestamp suitable for filtering transcript events.
+#
+# The setup script creates loop dirs named `YYYY-MM-DD_HH-MM-SS`; real
+# Claude transcript events carry timestamps like `2026-04-16T13:19:26.819Z`.
+# String comparison works cleanly once we pad the loop boundary with
+# `.000Z` so sub-second transcript timestamps in the same second always
+# compare greater.
+#
+# Usage: derive_loop_start_iso_ts "$loop_dir"
+#   Prints the ISO-8601 timestamp, or empty string when the basename does
+#   not match the expected format.
+derive_loop_start_iso_ts() {
+    local loop_dir="$1"
+    local base
+    base=$(basename "$loop_dir" 2>/dev/null || echo "")
+    if [[ "$base" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})$ ]]; then
+        printf '%sT%s:%s:%s.000Z' \
+            "${BASH_REMATCH[1]}" \
+            "${BASH_REMATCH[2]}" \
+            "${BASH_REMATCH[3]}" \
+            "${BASH_REMATCH[4]}"
+    fi
+}
+
 # Enumerate background-task ids that have been launched but not yet marked
 # completed in a Claude Code transcript.jsonl.
 #
@@ -290,7 +315,15 @@ extract_transcript_path() {
 #
 # pending := launched \ completed
 #
-# Usage: list_pending_background_task_ids "$transcript_path"
+# Optional second argument `since_ts` (ISO-8601 string, e.g. the value
+# returned by `derive_loop_start_iso_ts`): when provided, only launch
+# events whose top-level `.timestamp` field is >= `since_ts` count as
+# candidate launches. Events without a `.timestamp` are included (keeps
+# fixture transcripts and older record formats working). This keeps
+# pre-loop session-wide background work from pinning an RLCR loop that
+# has no pending work of its own.
+#
+# Usage: list_pending_background_task_ids "$transcript_path" [since_ts]
 #   - Outputs one id per line on stdout (possibly empty).
 #   - Returns 0 when the transcript is readable (including when there are
 #     no pending tasks). Returns 1 when the transcript path is empty, not
@@ -298,6 +331,7 @@ extract_transcript_path() {
 #     as "unknown -> do not short-circuit".
 list_pending_background_task_ids() {
     local transcript_path="$1"
+    local since_ts="${2:-}"
 
     # Normalize a leading tilde so direct callers (tests, ad-hoc scripts)
     # work correctly even when transcript_path was not routed through
@@ -312,8 +346,13 @@ list_pending_background_task_ids() {
     fi
 
     local launched completed
-    launched=$(jq -r '
+    launched=$(jq -r --arg since_ts "$since_ts" '
         select(.toolUseResult != null)
+        | select(
+            ($since_ts == ""
+             or ((.timestamp // "") == "")
+             or ((.timestamp // "") >= $since_ts))
+          )
         | select(
             (.toolUseResult.isAsync == true and (.toolUseResult.agentId // "") != "")
             or ((.toolUseResult.backgroundTaskId // "") != "")
@@ -355,22 +394,24 @@ list_pending_background_task_ids() {
 # Returns 1 when no pending tasks are detected (including fail-closed cases
 # like missing transcript, non-file path, or jq unavailable).
 #
-# Usage: has_pending_background_tasks "$transcript_path"
+# Usage: has_pending_background_tasks "$transcript_path" [since_ts]
 has_pending_background_tasks() {
     local transcript_path="$1"
+    local since_ts="${2:-}"
     local pending
-    pending=$(list_pending_background_task_ids "$transcript_path" 2>/dev/null) || return 1
+    pending=$(list_pending_background_task_ids "$transcript_path" "$since_ts" 2>/dev/null) || return 1
     [[ -n "$pending" ]]
 }
 
 # Prints the count of pending background tasks to stdout. Prints 0 for any
 # error case so callers can still format messages safely.
 #
-# Usage: count_pending_background_tasks "$transcript_path"
+# Usage: count_pending_background_tasks "$transcript_path" [since_ts]
 count_pending_background_tasks() {
     local transcript_path="$1"
+    local since_ts="${2:-}"
     local pending
-    pending=$(list_pending_background_task_ids "$transcript_path" 2>/dev/null) || {
+    pending=$(list_pending_background_task_ids "$transcript_path" "$since_ts" 2>/dev/null) || {
         echo 0
         return 0
     }

@@ -541,12 +541,27 @@ fi
 # Verify the gate wrapper path with a tilde-form --transcript-path also
 # reaches the short-circuit. AC-9 uses an absolute transcript path; this
 # covers the same code path with a "~/..." form.
+#
+# Fresh fixture so the repo has no prior bg-pending.marker (AC-10 left
+# one behind). The ambiguous-caller guard in the hook only silences the
+# wrapper when a marker already exists; a clean repo falls through to
+# the normal short-circuit so the systemMessage surfaces in the wrapper
+# output.
 echo "Test AC-10c: rlcr-stop-gate.sh with '~/...' --transcript-path -> ALLOW"
+AC10C_REPO="$TEST_DIR/ac10c"
+create_full_fixture "$AC10C_REPO" > /dev/null
+mkdir -p "$FAKE_HOME/session-data-c"
+AC10C_TRANSCRIPT="$FAKE_HOME/session-data-c/ac10c.jsonl"
+AC10C_LAUNCH=$(emit_tool_use_assistant "toolu_H2" "Agent" ',"description":"x","prompt":"x"')
+AC10C_RESULT=$(emit_async_agent_launch_result "toolu_H2" "agent_pending_H2")
+write_transcript "$AC10C_TRANSCRIPT" "$AC10C_LAUNCH" "$AC10C_RESULT"
+AC10C_TILDE_PATH="~/session-data-c/ac10c.jsonl"
+
 AC10C_OUT="$TEST_DIR/ac10c-out.txt"
 set +e
 (
-    cd "$AC10_REPO"
-    HOME="$FAKE_HOME" "$GATE_SCRIPT" --transcript-path "$AC10_TILDE_PATH"
+    cd "$AC10C_REPO"
+    HOME="$FAKE_HOME" "$GATE_SCRIPT" --transcript-path "$AC10C_TILDE_PATH"
 ) > "$AC10C_OUT" 2>&1
 AC10C_EXIT=$?
 set -e
@@ -1053,11 +1068,14 @@ else
 fi
 
 # ---------------- AC-19 ----------------
-# Empty-session caller must still be treated as "foreign" for a parked
-# loop whose stored session_id is non-empty. Real trigger: callers such
-# as scripts/rlcr-stop-gate.sh invoked without --session-id reach the
-# hook with no session_id key at all.
-echo "Test AC-19: cross-session guard fires when hook input omits session_id"
+# Empty-session caller + bg-pending.marker present: the caller might be
+# the parked loop's owner invoking through a wrapper that didn't forward
+# session_id, OR it might be a different session. The hook cannot tell
+# them apart from the input, so the safe response is `exit 0` silently
+# with no systemMessage and no on-disk mutation. The real Claude stop
+# hook (which always has session_id populated) drives actual parking and
+# cleanup.
+echo "Test AC-19: ambiguous caller (empty session_id + marker) exits silently"
 AC19_REPO="$TEST_DIR/ac19"
 AC19_LOOP=$(create_full_fixture "$AC19_REPO")
 AC19_STATE="$AC19_LOOP/state.md"
@@ -1087,9 +1105,6 @@ EOF_AC19
 AC19_STATE_HASH_BEFORE=$(sha256sum "$AC19_STATE" | awk '{print $1}')
 : > "$AC19_MARKER"
 
-# Transcript exists and is a readable, well-formed minimal record. The
-# guard must rely on the stored-vs-current session_id mismatch alone,
-# not on transcript readability, to detect the foreign-session case.
 AC19_TRANSCRIPT="$TRANSCRIPTS_DIR/ac19.jsonl"
 write_transcript "$AC19_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
 
@@ -1103,11 +1118,11 @@ if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
    && [[ ! -f "$RUN_MARKER" ]] \
    && [[ -f "$AC19_MARKER" ]] \
    && [[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] \
-   && printf '%s' "$AC19_SYS_MSG" | grep -qi "parked"; then
-    pass "AC-19: empty hook session_id triggers 'parked' guard; marker and state preserved"
+   && [[ -z "$AC19_SYS_MSG" ]]; then
+    pass "AC-19: ambiguous caller exits silently; marker and state.md preserved"
 else
-    fail "AC-19: empty hook session_id triggers 'parked' guard; marker and state preserved" \
-        "exit 0 + systemMessage matches /parked/ + marker stays + state.md byte-identical + no Codex" \
+    fail "AC-19: ambiguous caller exits silently; marker and state.md preserved" \
+        "exit 0 + no systemMessage + marker stays + state.md byte-identical + no Codex" \
         "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AC19_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AC19_SYS_MSG'; output: $RUN_OUTPUT"
 fi
 
@@ -1159,6 +1174,178 @@ else
     fail "AC-20: malformed transcript preserves bg-pending.marker" \
         "marker still present (cleanup must not fire on fail-closed helper)" \
         "marker was removed"
+fi
+
+# ---------------- AC-21 ----------------
+# Transcript scan boundary: the Claude transcript is session-wide and
+# can contain background launches that predate the RLCR loop. The
+# helper filters launch events by `.timestamp >= since_ts` (derived
+# from the loop dir basename) so only launches made after the loop
+# started count as pending.
+echo "Test AC-21: pre-loop launches are filtered out by since_ts"
+AC21_TRANSCRIPT="$TRANSCRIPTS_DIR/ac21.jsonl"
+
+# The loop boundary used throughout the suite's fixtures is
+# 2026-03-01 00:00:00. Build two launches: one BEFORE that boundary
+# (should be filtered) and one AFTER (should still count as pending).
+AC21_PRE_LAUNCH=$(jq -c -n '{
+    type:"user",
+    timestamp:"2026-02-28T10:00:00.000Z",
+    toolUseResult:{isAsync:true, agentId:"agent_pre_loop"}
+}')
+AC21_POST_LAUNCH=$(jq -c -n '{
+    type:"user",
+    timestamp:"2026-03-01T10:00:00.000Z",
+    toolUseResult:{isAsync:true, agentId:"agent_in_loop"}
+}')
+write_transcript "$AC21_TRANSCRIPT" "$AC21_PRE_LAUNCH" "$AC21_POST_LAUNCH"
+
+AC21_SINCE="2026-03-01T00:00:00.000Z"
+AC21_FILTERED=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$AC21_TRANSCRIPT" "$AC21_SINCE" 2>/dev/null | sort -u
+)
+if [[ "$AC21_FILTERED" == "agent_in_loop" ]]; then
+    pass "AC-21: list_pending_background_task_ids filters launches before since_ts"
+else
+    fail "AC-21: list_pending_background_task_ids filters launches before since_ts" \
+        "only 'agent_in_loop' (pre-loop launch excluded)" "got: $AC21_FILTERED"
+fi
+
+# AC-21b: confirm the derive helper produces the expected ISO-8601 form
+# so real callers get a matching boundary.
+AC21B_DERIVED=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    derive_loop_start_iso_ts "/tmp/.humanize/rlcr/2026-03-01_00-00-00"
+)
+if [[ "$AC21B_DERIVED" == "2026-03-01T00:00:00.000Z" ]]; then
+    pass "AC-21b: derive_loop_start_iso_ts emits ISO-8601 with .000Z suffix"
+else
+    fail "AC-21b: derive_loop_start_iso_ts emits ISO-8601 with .000Z suffix" \
+        "2026-03-01T00:00:00.000Z" "$AC21B_DERIVED"
+fi
+
+# AC-21c: end-to-end through the stop hook. Pre-loop launch only -> hook
+# must NOT short-circuit (no pending bg "belongs" to this loop).
+echo "Test AC-21c: stop hook ignores pre-loop launches for this loop"
+AC21C_REPO="$TEST_DIR/ac21c"
+AC21C_LOOP=$(create_full_fixture "$AC21C_REPO")
+AC21C_MARKER="$AC21C_LOOP/bg-pending.marker"
+AC21C_TRANSCRIPT="$TRANSCRIPTS_DIR/ac21c.jsonl"
+write_transcript "$AC21C_TRANSCRIPT" "$AC21_PRE_LAUNCH"
+AC21C_INPUT=$(jq -c -n --arg tp "$AC21C_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_home"}')
+run_stop_hook_with_input "$AC21C_REPO" "$AC21C_INPUT"
+
+# With the pre-loop launch filtered out, the transcript has no in-loop
+# pending bg -> no short-circuit -> no marker written -> hook proceeds
+# to the normal flow (which will call Codex in this fixture).
+if [[ ! -f "$AC21C_MARKER" ]] && [[ -f "$RUN_MARKER" ]]; then
+    pass "AC-21c: pre-loop launch does not write bg-pending.marker; Codex runs"
+else
+    fail "AC-21c: pre-loop launch does not write bg-pending.marker; Codex runs" \
+        "no bg marker AND Codex invoked" \
+        "bg_marker=$(test -f "$AC21C_MARKER" && echo present || echo missing); codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing)"
+fi
+
+# ---------------- AC-22 ----------------
+# Wrapper without --session-id on a repo that has NO marker: should
+# behave just like the normal same-session path, i.e. a pending bg in
+# the transcript writes the marker and the wrapper output surfaces the
+# "background task" systemMessage. This confirms the ambiguous-caller
+# guard only fires on a pre-existing marker, not on every no-session
+# call.
+echo "Test AC-22: wrapper without session_id, no prior marker, pending bg -> ALLOW with systemMessage"
+AC22_REPO="$TEST_DIR/ac22"
+create_full_fixture "$AC22_REPO" > /dev/null
+AC22_LOOP="$AC22_REPO/.humanize/rlcr/2026-03-01_00-00-00"
+AC22_MARKER="$AC22_LOOP/bg-pending.marker"
+AC22_TRANSCRIPT="$TRANSCRIPTS_DIR/ac22.jsonl"
+AC22_LAUNCH=$(jq -c -n '{
+    type:"user",
+    timestamp:"2026-03-01T10:00:00.000Z",
+    toolUseResult:{isAsync:true, agentId:"agent_wrapper_pending"}
+}')
+write_transcript "$AC22_TRANSCRIPT" "$AC22_LAUNCH"
+
+AC22_OUT="$TEST_DIR/ac22-out.txt"
+set +e
+(
+    cd "$AC22_REPO"
+    "$GATE_SCRIPT" --transcript-path "$AC22_TRANSCRIPT"
+) > "$AC22_OUT" 2>&1
+AC22_EXIT=$?
+set -e
+
+if [[ "$AC22_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$AC22_OUT" \
+   && grep -q "background task" "$AC22_OUT" \
+   && [[ -f "$AC22_MARKER" ]]; then
+    pass "AC-22: wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage"
+else
+    AC22_BODY=$(cat "$AC22_OUT" 2>/dev/null || true)
+    fail "AC-22: wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage" \
+        "exit 0 + ALLOW + 'background task' + marker written" \
+        "exit $AC22_EXIT; marker=$(test -f "$AC22_MARKER" && echo present || echo missing); output: $AC22_BODY"
+fi
+
+# AC-22b: wrapper without --session-id on a repo that ALREADY has a
+# marker (e.g. set up by a prior hook call). Must exit 0 silently -- no
+# systemMessage, no state mutation. Mirrors the real scenario Codex
+# flagged: rlcr-stop-gate.sh re-run by an unaware caller.
+echo "Test AC-22b: wrapper without session_id, prior marker -> silent ALLOW"
+AC22B_REPO="$TEST_DIR/ac22b"
+AC22B_LOOP=$(create_full_fixture "$AC22B_REPO")
+AC22B_STATE="$AC22B_LOOP/state.md"
+AC22B_MARKER="$AC22B_LOOP/bg-pending.marker"
+AC22B_BRANCH=$(git -C "$AC22B_REPO" rev-parse --abbrev-ref HEAD)
+AC22B_BASE_COMMIT=$(git -C "$AC22B_REPO" rev-parse HEAD)
+cat > "$AC22B_STATE" <<EOF_AC22B
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC22B_BRANCH
+base_branch: $AC22B_BRANCH
+base_commit: $AC22B_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_alpha
+---
+EOF_AC22B
+AC22B_STATE_HASH_BEFORE=$(sha256sum "$AC22B_STATE" | awk '{print $1}')
+: > "$AC22B_MARKER"
+
+AC22B_OUT="$TEST_DIR/ac22b-out.txt"
+set +e
+(
+    cd "$AC22B_REPO"
+    "$GATE_SCRIPT"
+) > "$AC22B_OUT" 2>&1
+AC22B_EXIT=$?
+set -e
+
+AC22B_STATE_HASH_AFTER=$(sha256sum "$AC22B_STATE" | awk '{print $1}')
+if [[ "$AC22B_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$AC22B_OUT" \
+   && ! grep -qi "parked" "$AC22B_OUT" \
+   && [[ -f "$AC22B_MARKER" ]] \
+   && [[ "$AC22B_STATE_HASH_BEFORE" == "$AC22B_STATE_HASH_AFTER" ]]; then
+    pass "AC-22b: wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved"
+else
+    AC22B_BODY=$(cat "$AC22B_OUT" 2>/dev/null || true)
+    fail "AC-22b: wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved" \
+        "exit 0 + ALLOW: (no 'parked') + marker kept + state.md byte-identical" \
+        "exit $AC22B_EXIT; marker=$(test -f "$AC22B_MARKER" && echo present || echo missing); state_unchanged=$([[ "$AC22B_STATE_HASH_BEFORE" == "$AC22B_STATE_HASH_AFTER" ]] && echo yes || echo no); output: $AC22B_BODY"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"

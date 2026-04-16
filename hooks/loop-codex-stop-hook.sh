@@ -68,6 +68,27 @@ if [[ -z "$LOOP_DIR" ]]; then
     exit 0
 fi
 
+# Shared state used by both guard blocks and the pending-tasks check below.
+# Loop-start boundary: derived from the loop dir basename (`YYYY-MM-DD_HH-MM-SS`).
+# Empty means derivation failed; helpers treat empty since_ts as no boundary.
+LOOP_START_TS=$(derive_loop_start_iso_ts "$LOOP_DIR")
+HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
+
+# ========================================
+# Ambiguous-Caller Marker Guard
+# ========================================
+# If a bg-pending.marker is present but we have no session_id on this
+# hook invocation (typical of scripts/rlcr-stop-gate.sh invoked without
+# --session-id, or any other caller that doesn't forward session_id),
+# we cannot tell whether this caller owns the parked loop. Taking either
+# branch (foreign-session guard below, or same-session cleanup further
+# down) would be wrong in one of the two possible realities. Exit 0
+# silently: the real Claude hook will arrive with session_id populated
+# and drive parking / cleanup from an authoritative context.
+if [[ -f "$LOOP_DIR/bg-pending.marker" ]] && [[ -z "$HOOK_SESSION_ID" ]]; then
+    exit 0
+fi
+
 # ========================================
 # Cross-Session Parked-Loop Guard
 # ========================================
@@ -77,18 +98,17 @@ fi
 # transcript sees none of the foreign bg activity - so the only safe
 # response is to exit 0 with a distinct systemMessage and leave every
 # on-disk artifact (state file, stored session_id, marker) untouched.
-HOOK_TRANSCRIPT_PATH=$(extract_transcript_path "$HOOK_INPUT")
+#
+# Both sides of the session-id comparison must be non-empty for this
+# branch to trigger: an empty HOOK_SESSION_ID has already exited above
+# via the ambiguous-caller guard, and an empty stored session_id keeps
+# the backward-compat "matches any" semantics from find_active_loop.
 if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
     GUARD_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
     if [[ -n "$GUARD_STATE_FILE" ]]; then
         GUARD_STORED_SID=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$GUARD_STATE_FILE" 2>/dev/null | tr -d ' ')
-        # Non-empty stored session_id that differs from the caller's session
-        # (empty or not) means this is a foreign parked loop. Hook-input
-        # schemas that omit session_id -- such as rlcr-stop-gate.sh invoked
-        # without --session-id -- still get a mismatch here and take the
-        # safe exit path. An empty stored session_id keeps the existing
-        # backward-compat "matches any" semantics from find_active_loop.
         if [[ -n "$GUARD_STORED_SID" ]] \
+           && [[ -n "$HOOK_SESSION_ID" ]] \
            && [[ "$GUARD_STORED_SID" != "$HOOK_SESSION_ID" ]]; then
             jq -n \
                 '{systemMessage: "RLCR loop in this repo is parked by another Claude session waiting for background work. Stop allowed; your session leaves the loop untouched. If that session ended, run /humanize:cancel-rlcr-loop to clean up."}'
@@ -111,10 +131,14 @@ fi
 # untouched -- the next natural stop (after background work finishes) will
 # re-enter this hook with no pending tasks and run the normal flow.
 #
+# LOOP_START_TS confines the transcript scan to launches that actually
+# happened during this loop; earlier session-wide bg activity cannot pin
+# the loop.
+#
 # This check MUST run before any other gate (phase detection, state parsing,
 # branch / plan / git-clean / summary / max-iter checks, Codex review).
-if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH"; then
-    PENDING_BG_COUNT=$(count_pending_background_tasks "$HOOK_TRANSCRIPT_PATH")
+if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH" "$LOOP_START_TS"; then
+    PENDING_BG_COUNT=$(count_pending_background_tasks "$HOOK_TRANSCRIPT_PATH" "$LOOP_START_TS")
     # Mark the loop as parked; allows the same session to resume later and
     # makes the cross-session guard above reachable if the user opens a
     # different Claude session in this repo before the bg task completes.
@@ -142,7 +166,7 @@ fi
 # The check uses a single fresh call so we capture both the exit code
 # and the emptiness without double-running jq.
 if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
-    if PENDING_BG_CHECK=$(list_pending_background_task_ids "$HOOK_TRANSCRIPT_PATH" 2>/dev/null) \
+    if PENDING_BG_CHECK=$(list_pending_background_task_ids "$HOOK_TRANSCRIPT_PATH" "$LOOP_START_TS" 2>/dev/null) \
        && [[ -z "$PENDING_BG_CHECK" ]]; then
         rm -f "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
     fi
