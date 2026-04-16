@@ -448,9 +448,18 @@ find_active_loop() {
         return
     fi
 
-    # Session filter: iterate newest-to-oldest, find the first dir belonging
-    # to this session (any state file), then check if it is still active.
+    # Session filter: iterate newest-to-oldest.
+    #
+    # The caller's own (exact stored session_id) match takes precedence over
+    # any marker-based adoption: with multiple active RLCR loops in the same
+    # repo, a newer dir parked by a different session must not be returned
+    # before an older dir that actually belongs to the caller. Marker
+    # candidates are recorded during the scan and only used as a fallback
+    # when no exact match is found anywhere. Zombie-loop protection
+    # (terminal newest for this session returns empty) still wins over
+    # marker fallback.
     local dir
+    local marker_candidate=""
     while IFS= read -r dir; do
         [[ -z "$dir" ]] && continue
         local trimmed_dir="${dir%/}"
@@ -464,9 +473,9 @@ find_active_loop() {
         local stored_session_id
         stored_session_id=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/'"${FIELD_SESSION_ID}"': *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
 
-        # Empty stored session_id matches any session (backward compat)
+        # Empty stored session_id matches any session (backward compat).
         if [[ -z "$stored_session_id" ]] || [[ "$stored_session_id" == "$filter_session_id" ]]; then
-            # This is the newest dir for this session -- only return if active
+            # Newest dir for this session -- only return if active.
             local active_state
             active_state=$(resolve_active_state_file "$trimmed_dir")
             if [[ -n "$active_state" ]]; then
@@ -474,26 +483,33 @@ find_active_loop() {
                 return
             fi
             # Session's newest loop is in terminal state; do not fall through
+            # to marker-based adoption either.
             echo ""
             return
         fi
 
-        # Session mismatch: adopt the loop only when it was explicitly parked
-        # for a background task (stop hook writes bg-pending.marker there).
-        if [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
-            local active_state_bg
-            active_state_bg=$(resolve_active_state_file "$trimmed_dir")
-            if [[ -n "$active_state_bg" ]]; then
-                echo "$trimmed_dir"
-                return
+        # Session mismatch: stash the newest eligible marker candidate but
+        # keep walking in case an older dir is the caller's own session.
+        if [[ -z "$marker_candidate" ]] && [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
+            local candidate_state
+            candidate_state=$(resolve_active_state_file "$trimmed_dir")
+            if [[ -n "$candidate_state" ]]; then
+                marker_candidate="$trimmed_dir"
             fi
-            # Marker on a terminal loop is stale; ignore it and keep walking.
+            # Marker on a terminal loop is stale; leave it alone.
         fi
     done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
 
+    # No exact session match. Fall back to marker-based adoption if any --
+    # this is the cross-session recovery path when a previous session parked
+    # the loop and then died before the background-task completion arrived.
+    if [[ -n "$marker_candidate" ]]; then
+        echo "$marker_candidate"
+        return
+    fi
+
     echo ""
 }
-
 
 # Extract current round number from state.md
 # Outputs the round number to stdout, defaults to 0

@@ -95,6 +95,28 @@ if has_pending_background_tasks "$HOOK_TRANSCRIPT_PATH"; then
     exit 0
 fi
 
+# No pending background task. If a stale bg-pending.marker is lingering
+# here, this stop is the resume point. When find_active_loop picked this
+# dir up through the marker-fallback path (stored session_id differs from
+# the current one), rewrite the stored session_id so future same-session
+# stops use the exact-match path, then remove the marker so any later
+# hook trigger from an unrelated session is rejected rather than adopted.
+if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
+    ADOPT_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
+    if [[ -n "$ADOPT_STATE_FILE" ]] && [[ -n "$HOOK_SESSION_ID" ]]; then
+        STORED_SID_ADOPT=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$ADOPT_STATE_FILE" 2>/dev/null | tr -d ' ')
+        if [[ -n "$STORED_SID_ADOPT" ]] && [[ "$STORED_SID_ADOPT" != "$HOOK_SESSION_ID" ]]; then
+            # Portable in-place rewrite. Failure is logged but non-fatal:
+            # worst case the next stop re-adopts via the marker pathway.
+            if ! sed -i.bak -E "s|^(${FIELD_SESSION_ID}:).*$|\\1 $HOOK_SESSION_ID|" "$ADOPT_STATE_FILE" 2>/dev/null; then
+                echo "Warning: failed to adopt session_id in $ADOPT_STATE_FILE" >&2
+            fi
+            rm -f "${ADOPT_STATE_FILE}.bak" 2>/dev/null || true
+        fi
+    fi
+    rm -f "$LOOP_DIR/bg-pending.marker" 2>/dev/null || true
+fi
+
 # ========================================
 # Detect Loop Phase: Normal or Finalize
 # ========================================

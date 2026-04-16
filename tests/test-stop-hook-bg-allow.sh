@@ -672,5 +672,161 @@ else
         "exit $RUN_EXIT_CODE, marker=$(test -f "$AC11C_MARKER" && echo present || echo missing); output: $RUN_OUTPUT"
 fi
 
+# ---------------- AC-12 ----------------
+# Session isolation under multiple concurrent RLCR loops: when the caller's
+# own exact-match dir exists in the listing, find_active_loop must return
+# it even if a newer sibling dir (belonging to another session) also has a
+# bg-pending.marker. The marker fallback is only for orphan recovery when
+# no exact match exists.
+echo "Test AC-12: find_active_loop prefers exact session match over marker"
+AC12_BASE="$TEST_DIR/ac12-loops"
+mkdir -p "$AC12_BASE/2026-03-02_00-00-00"
+mkdir -p "$AC12_BASE/2026-03-01_00-00-00"
+
+cat > "$AC12_BASE/2026-03-02_00-00-00/state.md" <<'EOF_AC12_NEWER'
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+session_id: session_foreign
+---
+EOF_AC12_NEWER
+: > "$AC12_BASE/2026-03-02_00-00-00/bg-pending.marker"
+
+cat > "$AC12_BASE/2026-03-01_00-00-00/state.md" <<'EOF_AC12_OLDER'
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+session_id: session_home
+---
+EOF_AC12_OLDER
+
+AC12_RESULT=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    find_active_loop "$AC12_BASE" "session_home"
+)
+if [[ "$AC12_RESULT" == "$AC12_BASE/2026-03-01_00-00-00" ]]; then
+    pass "AC-12: find_active_loop returns older exact-match dir over newer marker dir"
+else
+    fail "AC-12: find_active_loop returns older exact-match dir over newer marker dir" \
+        "$AC12_BASE/2026-03-01_00-00-00" "$AC12_RESULT"
+fi
+
+if [[ -f "$AC12_BASE/2026-03-02_00-00-00/bg-pending.marker" ]]; then
+    pass "AC-12b: foreign session's marker untouched by find_active_loop scan"
+else
+    fail "AC-12b: foreign session's marker untouched by find_active_loop scan" \
+        "newer dir marker still present" "marker was removed"
+fi
+
+# ---------------- AC-13 ----------------
+# Same-session resume after background completion: a stale marker from the
+# previous short-circuit must be cleaned up on the next stop where no bg is
+# pending. State.md session_id stays put because it already matches.
+echo "Test AC-13: same-session resume removes stale bg-pending.marker"
+AC13_REPO="$TEST_DIR/ac13"
+AC13_LOOP=$(create_full_fixture "$AC13_REPO")
+AC13_STATE="$AC13_LOOP/state.md"
+AC13_BRANCH=$(git -C "$AC13_REPO" rev-parse --abbrev-ref HEAD)
+AC13_BASE_COMMIT=$(git -C "$AC13_REPO" rev-parse HEAD)
+cat > "$AC13_STATE" <<EOF_AC13
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC13_BRANCH
+base_branch: $AC13_BRANCH
+base_commit: $AC13_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_home
+---
+EOF_AC13
+: > "$AC13_LOOP/bg-pending.marker"
+
+AC13_TRANSCRIPT="$TRANSCRIPTS_DIR/ac13.jsonl"
+write_transcript "$AC13_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+AC13_INPUT=$(jq -c -n --arg tp "$AC13_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_home"}')
+run_stop_hook_with_input "$AC13_REPO" "$AC13_INPUT"
+
+if [[ ! -f "$AC13_LOOP/bg-pending.marker" ]]; then
+    pass "AC-13: marker removed on non-short-circuit resume (same session)"
+else
+    fail "AC-13: marker removed on non-short-circuit resume (same session)" \
+        "marker absent" "marker still present"
+fi
+
+if grep -q "^session_id: session_home$" "$AC13_STATE"; then
+    pass "AC-13b: same-session resume leaves state.md session_id unchanged"
+else
+    fail "AC-13b: same-session resume leaves state.md session_id unchanged" \
+        "session_id: session_home" "$(grep '^session_id:' "$AC13_STATE" || echo '(missing)')"
+fi
+
+# ---------------- AC-14 ----------------
+# Cross-session resume: a different session walks in, finds the loop through
+# the marker fallback, and the non-short-circuit path must rewrite the
+# stored session_id so future same-session stops use the exact-match path
+# instead of re-adopting via a stale marker.
+echo "Test AC-14: cross-session resume rewrites session_id and removes marker"
+AC14_REPO="$TEST_DIR/ac14"
+AC14_LOOP=$(create_full_fixture "$AC14_REPO")
+AC14_STATE="$AC14_LOOP/state.md"
+AC14_BRANCH=$(git -C "$AC14_REPO" rev-parse --abbrev-ref HEAD)
+AC14_BASE_COMMIT=$(git -C "$AC14_REPO" rev-parse HEAD)
+cat > "$AC14_STATE" <<EOF_AC14
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC14_BRANCH
+base_branch: $AC14_BRANCH
+base_commit: $AC14_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_foreign
+---
+EOF_AC14
+: > "$AC14_LOOP/bg-pending.marker"
+
+AC14_TRANSCRIPT="$TRANSCRIPTS_DIR/ac14.jsonl"
+write_transcript "$AC14_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+AC14_INPUT=$(jq -c -n --arg tp "$AC14_TRANSCRIPT" \
+    '{transcript_path:$tp, session_id:"session_home"}')
+run_stop_hook_with_input "$AC14_REPO" "$AC14_INPUT"
+
+if [[ ! -f "$AC14_LOOP/bg-pending.marker" ]]; then
+    pass "AC-14: marker removed after cross-session resume"
+else
+    fail "AC-14: marker removed after cross-session resume" \
+        "marker absent" "marker still present"
+fi
+
+if grep -q "^session_id: session_home$" "$AC14_STATE"; then
+    pass "AC-14b: state.md session_id rewritten to the current session on adoption"
+else
+    fail "AC-14b: state.md session_id rewritten to the current session on adoption" \
+        "session_id: session_home" "$(grep '^session_id:' "$AC14_STATE" || echo '(missing)')"
+fi
+
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
 exit $?
