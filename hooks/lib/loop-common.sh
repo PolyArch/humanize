@@ -276,11 +276,17 @@ extract_transcript_path() {
 #   - Background shell: toolUseResult.backgroundTaskId non-empty
 #     -> id is toolUseResult.backgroundTaskId
 #
-# Completion events (inspected in "queue-operation" messages with
-# operation == "enqueue" whose content contains a <task-notification>
-# XML block): any <task-id>...</task-id> value is treated as terminal
-# regardless of the reported <status> (completed, failed, killed,
-# cancelled, interrupted, ...).
+# Completion events are recognised from two Claude Code transcript forms:
+#
+#   1. Structured SDK record
+#      (see SDKTaskNotificationMessage in docs/typescript.md):
+#      `type == "system"`, `subtype == "task_notification"`,
+#      `task_id` is the completed id. Any `status` value
+#      (completed, failed, stopped, ...) is treated as terminal.
+#
+#   2. Legacy queue-operation enqueue whose `content` embeds a
+#      `<task-notification>` XML block with `<task-id>...</task-id>`;
+#      kept for transcripts produced by older Claude Code versions.
 #
 # pending := launched \ completed
 #
@@ -315,14 +321,29 @@ list_pending_background_task_ids() {
         | (.toolUseResult.agentId // .toolUseResult.backgroundTaskId)
     ' "$transcript_path" 2>/dev/null | sort -u) || return 1
 
-    completed=$(jq -r '
-        select(.type == "queue-operation" and .operation == "enqueue")
-        | (.content // "" | tostring)
-        | select(contains("<task-notification>"))
-    ' "$transcript_path" 2>/dev/null \
-        | grep -oE '<task-id>[^<]+</task-id>' \
-        | sed -E 's|</?task-id>||g' \
-        | sort -u) || completed=""
+    # Union of both completion formats. Either source alone is enough to
+    # mark a launched id terminal.
+    #
+    # The `grep -oE || true` guard on the legacy branch keeps `set -o
+    # pipefail` from poisoning the combined pipeline when no legacy
+    # queue-operation records exist in the transcript (grep with `-o`
+    # exits 1 on no matches, which would otherwise wipe out any SDK
+    # task_notification results collected above).
+    completed=$(
+        {
+            jq -r '
+                select(.type == "system" and .subtype == "task_notification")
+                | (.task_id // empty)
+            ' "$transcript_path" 2>/dev/null
+            jq -r '
+                select(.type == "queue-operation" and .operation == "enqueue")
+                | (.content // "" | tostring)
+                | select(contains("<task-notification>"))
+            ' "$transcript_path" 2>/dev/null \
+                | { grep -oE '<task-id>[^<]+</task-id>' || true; } \
+                | sed -E 's|</?task-id>||g'
+        } | sort -u | sed '/^$/d'
+    ) || completed=""
 
     # Emit launched ids that have no matching completion notification.
     comm -23 \

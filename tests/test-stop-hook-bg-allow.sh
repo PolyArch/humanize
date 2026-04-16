@@ -215,6 +215,12 @@ emit_task_completion_event() {
         '{type:"queue-operation", operation:"enqueue", content:$content}'
 }
 
+emit_sdk_task_notification() {
+    local task_id="$1" tool_use_id="$2" status="${3:-completed}"
+    jq -c -n --arg tid "$task_id" --arg tu "$tool_use_id" --arg st "$status" \
+        '{type:"system", subtype:"task_notification", task_id:$tid, tool_use_id:$tu, status:$st}'
+}
+
 write_transcript() {
     local path="$1"
     shift
@@ -826,6 +832,157 @@ if grep -q "^session_id: session_home$" "$AC14_STATE"; then
 else
     fail "AC-14b: state.md session_id rewritten to the current session on adoption" \
         "session_id: session_home" "$(grep '^session_id:' "$AC14_STATE" || echo '(missing)')"
+fi
+
+# ---------------- AC-15 ----------------
+# Completion recognition: the current Claude Code transcript format emits
+# background-task completion as
+#   type: "system", subtype: "task_notification", task_id: "..."
+# The helper must recognise this form (not only the legacy queue-operation
+# XML block) or launched tasks will stay "pending" forever.
+echo "Test AC-15: task_notification system records mark launches completed"
+AC15_TRANSCRIPT="$TRANSCRIPTS_DIR/ac15.jsonl"
+AC15_LAUNCH=$(emit_tool_use_assistant "toolu_L" "Agent" ',"description":"x","prompt":"x"')
+AC15_RESULT=$(emit_async_agent_launch_result "toolu_L" "agent_done_L")
+AC15_NOTIF=$(emit_sdk_task_notification "agent_done_L" "toolu_L" "completed")
+write_transcript "$AC15_TRANSCRIPT" "$AC15_LAUNCH" "$AC15_RESULT" "$AC15_NOTIF"
+
+AC15_PENDING=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$AC15_TRANSCRIPT" 2>/dev/null
+)
+if [[ -z "$AC15_PENDING" ]]; then
+    pass "AC-15: task_notification completion removes the matching launch from pending"
+else
+    fail "AC-15: task_notification completion removes the matching launch from pending" \
+        "empty pending list" "got: $AC15_PENDING"
+fi
+
+# ---------------- AC-16 ----------------
+# Completion recognition mixed formats: two launches, one completed via the
+# legacy queue-operation XML block, the other via the current
+# system/task_notification record. Union of both sources must resolve to
+# an empty pending set.
+echo "Test AC-16: helper unions legacy queue-operation and task_notification completions"
+AC16_TRANSCRIPT="$TRANSCRIPTS_DIR/ac16.jsonl"
+AC16_L1=$(emit_tool_use_assistant "toolu_M1" "Agent" ',"description":"x","prompt":"x"')
+AC16_R1=$(emit_async_agent_launch_result "toolu_M1" "agent_legacy_M1")
+AC16_C1=$(emit_task_completion_event "agent_legacy_M1" "toolu_M1" "completed")
+AC16_L2=$(emit_tool_use_assistant "toolu_M2" "Agent" ',"description":"y","prompt":"y"')
+AC16_R2=$(emit_async_agent_launch_result "toolu_M2" "agent_sdk_M2")
+AC16_C2=$(emit_sdk_task_notification "agent_sdk_M2" "toolu_M2" "completed")
+write_transcript "$AC16_TRANSCRIPT" \
+    "$AC16_L1" "$AC16_R1" "$AC16_C1" \
+    "$AC16_L2" "$AC16_R2" "$AC16_C2"
+
+AC16_PENDING=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$AC16_TRANSCRIPT" 2>/dev/null
+)
+if [[ -z "$AC16_PENDING" ]]; then
+    pass "AC-16: mixed legacy+SDK completion records resolve to empty pending set"
+else
+    fail "AC-16: mixed legacy+SDK completion records resolve to empty pending set" \
+        "empty pending list" "got: $AC16_PENDING"
+fi
+
+# ---------------- AC-17 ----------------
+# Marker preservation when completion cannot be verified: if
+# transcript_path is missing or unreadable, has_pending_background_tasks
+# fails closed (returns no pending). The non-short-circuit cleanup must NOT
+# erase bg-pending.marker or rewrite session_id in that case, because the
+# cross-session recovery signal is still needed.
+echo "Test AC-17: missing transcript preserves bg-pending.marker and session_id"
+AC17_REPO="$TEST_DIR/ac17"
+AC17_LOOP=$(create_full_fixture "$AC17_REPO")
+AC17_STATE="$AC17_LOOP/state.md"
+AC17_BRANCH=$(git -C "$AC17_REPO" rev-parse --abbrev-ref HEAD)
+AC17_BASE_COMMIT=$(git -C "$AC17_REPO" rev-parse HEAD)
+cat > "$AC17_STATE" <<EOF_AC17
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC17_BRANCH
+base_branch: $AC17_BRANCH
+base_commit: $AC17_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_foreign
+---
+EOF_AC17
+: > "$AC17_LOOP/bg-pending.marker"
+
+# Hook input has NO transcript_path -> has_pending_background_tasks is
+# fail-closed; cleanup path must leave marker and session_id intact.
+AC17_INPUT='{"session_id":"session_home"}'
+run_stop_hook_with_input "$AC17_REPO" "$AC17_INPUT"
+
+if [[ -f "$AC17_LOOP/bg-pending.marker" ]]; then
+    pass "AC-17: unreadable transcript preserves bg-pending.marker"
+else
+    fail "AC-17: unreadable transcript preserves bg-pending.marker" \
+        "marker still present" "marker was removed"
+fi
+
+if grep -q "^session_id: session_foreign$" "$AC17_STATE"; then
+    pass "AC-17b: unreadable transcript leaves stored session_id untouched"
+else
+    fail "AC-17b: unreadable transcript leaves stored session_id untouched" \
+        "session_id: session_foreign" "$(grep '^session_id:' "$AC17_STATE" || echo '(missing)')"
+fi
+
+# AC-17c: transcript_path is provided but points at a non-existent file
+# (equally unreadable). Same guarantee: marker + stored session_id
+# preserved.
+echo "Test AC-17c: transcript_path pointing at non-existent file preserves marker"
+AC17C_REPO="$TEST_DIR/ac17c"
+AC17C_LOOP=$(create_full_fixture "$AC17C_REPO")
+AC17C_STATE="$AC17C_LOOP/state.md"
+AC17C_BRANCH=$(git -C "$AC17C_REPO" rev-parse --abbrev-ref HEAD)
+AC17C_BASE_COMMIT=$(git -C "$AC17C_REPO" rev-parse HEAD)
+cat > "$AC17C_STATE" <<EOF_AC17C
+---
+current_round: 0
+max_iterations: 42
+codex_model: gpt-5.4
+codex_effort: high
+codex_timeout: 60
+push_every_round: false
+full_review_round: 5
+plan_file: "plans/test-plan.md"
+plan_tracked: false
+start_branch: $AC17C_BRANCH
+base_branch: $AC17C_BRANCH
+base_commit: $AC17C_BASE_COMMIT
+review_started: false
+ask_codex_question: false
+agent_teams: false
+session_id: session_foreign
+---
+EOF_AC17C
+: > "$AC17C_LOOP/bg-pending.marker"
+
+AC17C_INPUT=$(jq -c -n --arg tp "$TRANSCRIPTS_DIR/never-written.jsonl" \
+    '{transcript_path:$tp, session_id:"session_home"}')
+run_stop_hook_with_input "$AC17C_REPO" "$AC17C_INPUT"
+
+if [[ -f "$AC17C_LOOP/bg-pending.marker" ]] \
+   && grep -q "^session_id: session_foreign$" "$AC17C_STATE"; then
+    pass "AC-17c: missing-file transcript_path preserves marker and session_id"
+else
+    fail "AC-17c: missing-file transcript_path preserves marker and session_id" \
+        "marker present and session_id: session_foreign" \
+        "marker=$(test -f "$AC17C_LOOP/bg-pending.marker" && echo present || echo missing); session_id=$(grep '^session_id:' "$AC17C_STATE" || echo '(missing)')"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"

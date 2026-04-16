@@ -101,7 +101,16 @@ fi
 # the current one), rewrite the stored session_id so future same-session
 # stops use the exact-match path, then remove the marker so any later
 # hook trigger from an unrelated session is rejected rather than adopted.
-if [[ -f "$LOOP_DIR/bg-pending.marker" ]]; then
+#
+# Guard: only perform the cleanup when we could actually inspect the
+# transcript. `has_pending_background_tasks` is fail-closed and also
+# returns false when the transcript is missing or unreadable (e.g.
+# rlcr-stop-gate.sh invoked without --transcript-path). In that case the
+# "no pending" signal is not authoritative, so the marker and the stored
+# session_id must be preserved to keep cross-session recovery reachable.
+if [[ -f "$LOOP_DIR/bg-pending.marker" ]] \
+   && [[ -n "$HOOK_TRANSCRIPT_PATH" ]] \
+   && [[ -f "$HOOK_TRANSCRIPT_PATH" ]]; then
     ADOPT_STATE_FILE=$(resolve_active_state_file "$LOOP_DIR")
     if [[ -n "$ADOPT_STATE_FILE" ]] && [[ -n "$HOOK_SESSION_ID" ]]; then
         STORED_SID_ADOPT=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$ADOPT_STATE_FILE" 2>/dev/null | tr -d ' ')
