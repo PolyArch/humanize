@@ -613,7 +613,6 @@ REQUIRED_SECTIONS=(
     "## Feasibility Hints"
     "## Dependencies and Sequence"
     "## Task Breakdown"
-    "## Claude-Codex Deliberation"
     "## Pending User Decisions"
     "## Implementation Notes"
 )
@@ -625,6 +624,14 @@ for section in "${REQUIRED_SECTIONS[@]}"; do
         MISSING_SECTIONS+=("$section")
     fi
 done
+
+# Plan Convergence Record: accept either the current name or the legacy
+# "## Claude-Codex Deliberation" produced by earlier Humanize versions so
+# refine-plan stays usable on pre-rename plans.
+if ! printf '%s\n' "$SCANNED_SECTIONS" | grep -qF -- "## Plan Convergence Record" \
+    && ! printf '%s\n' "$SCANNED_SECTIONS" | grep -qF -- "## Claude-Codex Deliberation"; then
+    MISSING_SECTIONS+=("## Plan Convergence Record (or legacy ## Claude-Codex Deliberation)")
+fi
 
 if [[ ${#MISSING_SECTIONS[@]} -gt 0 ]]; then
     echo "VALIDATION_ERROR: MISSING_REQUIRED_SECTIONS"

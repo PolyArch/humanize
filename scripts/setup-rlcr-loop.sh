@@ -2,7 +2,7 @@
 #
 # Setup script for start-rlcr-loop
 #
-# Creates state files for the loop that uses Codex to review Claude's work.
+# Creates state files for the loop that uses Codex review for iterative development.
 #
 # Usage:
 #   setup-rlcr-loop.sh <path/to/plan.md> [--max N] [--codex-model MODEL:EFFORT]
@@ -51,8 +51,11 @@ SKIP_IMPL_NO_PLAN="false"
 SKIP_IMPL_PLAN_ANCHORED="false"
 ASK_CODEX_QUESTION="true"
 AGENT_TEAMS="${DEFAULT_AGENT_TEAMS:-false}"
+BUILD_PROVIDER="${DEFAULT_BUILD_PROVIDER:-claude}"
 BITLESSON_ALLOW_EMPTY_NONE="true"
 PRIVACY_MODE="false"
+AGENT_TEAMS_EXPLICIT="false"
+BUILD_PROVIDER_EXPLICIT="false"
 
 extract_plan_goal_content() {
     local plan_path="$1"
@@ -93,7 +96,7 @@ show_help() {
 start-rlcr-loop - Iterative development with Codex review
 
 USAGE:
-  /humanize:start-rlcr-loop <path/to/plan.md> [OPTIONS]
+  setup-rlcr-loop.sh <path/to/plan.md> [OPTIONS]
 
 ARGUMENTS:
   <path/to/plan.md>    Path to a markdown file containing the implementation plan
@@ -116,18 +119,18 @@ OPTIONS:
                        Full Alignment Checks occur at rounds N-1, 2N-1, 3N-1, etc.
   --skip-impl          Skip implementation phase and go directly to code review
                        Plan file is optional when using this flag
-  --claude-answer-codex
-                       When Codex finds Open Questions, let Claude answer them
-                       directly instead of asking user via AskUserQuestion.
+  --answer-open-question
+                       When Codex finds Open Questions, answer them directly
+                       instead of asking user via AskUserQuestion.
                        NOT RECOMMENDED: Open Questions usually indicate gaps in
                        your plan that deserve human clarification. By default,
-                       Claude asks user for clarification, which is preferred.
-  --agent-teams        Enable Claude Code Agent Teams mode for parallel development.
+                       Humanize asks user for clarification, which is preferred.
+  --agent-teams        Enable Agent Teams mode for parallel development.
                        Requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 environment variable.
-                       Claude acts as team leader, splitting tasks among team members.
-  --yolo               Skip Plan Understanding Quiz and let Claude answer Codex Open
+                       Build agent acts as team leader, splitting tasks among team members.
+  --yolo               Skip Plan Understanding Quiz and auto-answer Codex Open
                        Questions directly. Convenience alias for --skip-quiz
-                       --claude-answer-codex. Use when you trust the plan and want
+                       --answer-open-question. Use when you trust the plan and want
                        maximum automation.
   --skip-quiz          Skip the Plan Understanding Quiz only (without other behavioral
                        changes). The quiz is an advisory pre-flight check that verifies
@@ -136,6 +139,11 @@ OPTIONS:
                        Allow BitLesson delta with action:none even with no new entries (default)
   --require-bitlesson-entry-for-none
                        Require at least one BitLesson entry when action is none
+  --build-provider <claude|codex>
+                       Which runtime builds the code (default: codex).
+                       codex:  Codex implements, Codex reviews (default workflow).
+                       claude: Legacy compatibility mode for older workflows.
+                       Review is always performed by Codex regardless of this setting.
   --privacy            Disable methodology analysis at loop exit (default: analysis enabled)
   -h, --help           Show this help message
 
@@ -144,31 +152,31 @@ DESCRIPTION:
   This command:
 
   1. Takes a markdown plan file as input (not a prompt string)
-  2. Uses Codex to independently review Claude's work each iteration
+  2. Uses Codex to independently review each iteration's work
   3. Has two phases: Implementation Phase and Review Phase
 
   The flow:
-  1. Claude executes plan tasks with tag-based routing (Implementation Phase)
-     - \`coding\` tasks: Claude implements directly
-     - \`analyze\` tasks: Claude delegates execution via \`/humanize:ask-codex\`
-  2. Claude writes a summary to round-N-summary.md
+  1. Build agent executes plan tasks with tag-based routing (Implementation Phase)
+     - \`coding\` tasks: Build agent implements directly
+     - \`analyze\` tasks: Build agent delegates execution via \`ask-codex.sh\`
+  2. Build agent writes a summary to round-N-summary.md
   3. On exit attempt, Codex reviews the summary
   4. If Codex finds issues, it blocks exit and sends feedback
   5. If Codex outputs "COMPLETE", enters Review Phase
   6. In Review Phase, codex review checks code quality with [P0-9] markers
-  7. If code review finds issues, Claude fixes them
+  7. If code review finds issues, build agent fixes them
   8. When no issues found, enters Finalize Phase and loop ends
 
 EXAMPLES:
-  /humanize:start-rlcr-loop docs/feature-plan.md
-  /humanize:start-rlcr-loop docs/impl.md --max 20
-  /humanize:start-rlcr-loop plan.md --codex-model ${DEFAULT_CODEX_MODEL}:${DEFAULT_CODEX_EFFORT}
-  /humanize:start-rlcr-loop plan.md --codex-timeout 7200  # 2 hour timeout
-  /humanize:start-rlcr-loop plan.md --yolo              # skip quiz, full automation
-  /humanize:start-rlcr-loop plan.md --skip-quiz          # skip quiz only
+  setup-rlcr-loop.sh docs/feature-plan.md
+  setup-rlcr-loop.sh docs/impl.md --max 20
+  setup-rlcr-loop.sh plan.md --codex-model ${DEFAULT_CODEX_MODEL}:${DEFAULT_CODEX_EFFORT}
+  setup-rlcr-loop.sh plan.md --codex-timeout 7200  # 2 hour timeout
+  setup-rlcr-loop.sh plan.md --yolo                # skip quiz, full automation
+  setup-rlcr-loop.sh plan.md --skip-quiz           # skip quiz only
 
 STOPPING:
-  - /humanize:cancel-rlcr-loop   Cancel the active loop
+  - cancel-rlcr-loop.sh   Cancel the active loop
   - Reach --max iterations
   - Pass code review (no [P0-9] issues) after COMPLETE
 
@@ -273,12 +281,13 @@ while [[ $# -gt 0 ]]; do
             SKIP_IMPL="true"
             shift
             ;;
-        --claude-answer-codex)
+        --answer-open-question|--claude-answer-codex)
             ASK_CODEX_QUESTION="false"
             shift
             ;;
         --agent-teams)
             AGENT_TEAMS="true"
+            AGENT_TEAMS_EXPLICIT="true"
             shift
             ;;
         --yolo)
@@ -296,6 +305,19 @@ while [[ $# -gt 0 ]]; do
         --require-bitlesson-entry-for-none)
             BITLESSON_ALLOW_EMPTY_NONE="false"
             shift
+            ;;
+        --build-provider)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --build-provider requires an argument (claude or codex)" >&2
+                exit 1
+            fi
+            if [[ "$2" != "claude" && "$2" != "codex" ]]; then
+                echo "Error: --build-provider must be 'claude' or 'codex', got: $2" >&2
+                exit 1
+            fi
+            BUILD_PROVIDER="$2"
+            BUILD_PROVIDER_EXPLICIT="true"
+            shift 2
             ;;
         --privacy)
             PRIVACY_MODE="true"
@@ -323,7 +345,19 @@ done
 # Validate Prerequisites
 # ========================================
 
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+CALLER_CWD="$(pwd -P 2>/dev/null || pwd)"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_ROOT")"
+
+# Plan paths resolve from the caller cwd when that cwd is inside the project.
+# If the script is launched from outside the project with CLAUDE_PROJECT_DIR
+# pointing at the repo root, relative plan paths should still resolve from the
+# project root rather than the unrelated outer working directory.
+if [[ "$CALLER_CWD" == "$PROJECT_ROOT" ]] || [[ "$CALLER_CWD" == "$PROJECT_ROOT/"* ]]; then
+    PLAN_RESOLUTION_BASE="$CALLER_CWD"
+else
+    PLAN_RESOLUTION_BASE="$PROJECT_ROOT"
+fi
 
 # loop-common.sh already sourced above (provides find_active_loop, etc.)
 
@@ -370,20 +404,71 @@ if [[ -n "$RLCR_LOOP_DIR" ]]; then
     echo "  Active loop: $RLCR_LOOP_DIR" >&2
     echo "" >&2
     echo "Only one loop can be active at a time." >&2
-    echo "Cancel the RLCR loop first with: /humanize:cancel-rlcr-loop" >&2
+    echo "Cancel the RLCR loop first with: ${SCRIPT_DIR}/cancel-rlcr-loop.sh" >&2
     exit 1
 fi
+
+# Preserve legacy Agent Teams defaults from merged user/project config without
+# overriding explicit CLI builder choices.
+legacy_agent_teams_config_needs_claude() {
+    [[ "$AGENT_TEAMS" == "true" ]] || return 1
+    [[ "$AGENT_TEAMS_EXPLICIT" != "true" ]] || return 1
+    [[ "$BUILD_PROVIDER_EXPLICIT" != "true" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local user_config_path=""
+    local project_config_path=""
+    local cfg=""
+    local agent_teams_enabled="false"
+
+    if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+        user_config_path="$XDG_CONFIG_HOME/humanize/config.json"
+    else
+        user_config_path="${HOME:-}/.config/humanize/config.json"
+    fi
+
+    if [[ -n "${HUMANIZE_CONFIG:-}" ]]; then
+        project_config_path="$HUMANIZE_CONFIG"
+    else
+        project_config_path="$PROJECT_ROOT/.humanize/config.json"
+    fi
+
+    for cfg in "$user_config_path" "$project_config_path"; do
+        [[ -f "$cfg" ]] || continue
+
+        if jq -e '.agent_teams == true' "$cfg" >/dev/null 2>&1; then
+            agent_teams_enabled="true"
+        fi
+
+        if jq -e 'has("build_provider") and ((.build_provider // "") != "")' "$cfg" >/dev/null 2>&1; then
+            return 1
+        fi
+    done
+
+    [[ "$agent_teams_enabled" == "true" ]]
+}
 
 # ========================================
 # Agent Teams Validation
 # ========================================
 
 if [[ "$AGENT_TEAMS" == "true" ]]; then
+    if [[ "$BUILD_PROVIDER" != "claude" ]]; then
+        if legacy_agent_teams_config_needs_claude; then
+            BUILD_PROVIDER="claude"
+        else
+            echo "Error: --agent-teams is currently available only with --build-provider claude." >&2
+            echo "" >&2
+            echo "The default build provider on this branch is codex." >&2
+            echo "If you need Agent Teams, start the loop with --build-provider claude." >&2
+            exit 1
+        fi
+    fi
     if [[ "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" != "1" ]]; then
         echo "Error: --agent-teams requires the CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS environment variable to be set." >&2
         echo "" >&2
-        echo "Claude Code Agent Teams is an experimental feature that must be enabled before use." >&2
-        echo "To enable it, set the environment variable before starting Claude Code:" >&2
+        echo "Agent Teams is currently available only in the Claude runtime." >&2
+        echo "To enable it, set the environment variable before starting Claude:" >&2
         echo "" >&2
         echo "  export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" >&2
         echo "" >&2
@@ -415,9 +500,9 @@ if [[ -z "$PLAN_FILE" ]]; then
     else
         echo "Error: No plan file provided" >&2
         echo "" >&2
-        echo "Usage: /humanize:start-rlcr-loop <path/to/plan.md> [OPTIONS]" >&2
+        echo "Usage: setup-rlcr-loop.sh <path/to/plan.md> [OPTIONS]" >&2
         echo "" >&2
-        echo "For help: /humanize:start-rlcr-loop --help" >&2
+        echo "For help: setup-rlcr-loop.sh --help" >&2
         exit 1
     fi
 fi
@@ -427,13 +512,13 @@ fi
 # ========================================
 
 # Check git repo (with timeout)
-if ! run_with_timeout "$GIT_TIMEOUT" git rev-parse --git-dir &>/dev/null; then
+if ! run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse --git-dir &>/dev/null; then
     echo "Error: Project must be a git repository (or git command timed out)" >&2
     exit 1
 fi
 
 # Check at least one commit (with timeout)
-if ! run_with_timeout "$GIT_TIMEOUT" git rev-parse HEAD &>/dev/null 2>&1; then
+if ! run_with_timeout "$GIT_TIMEOUT" git -C "$PROJECT_ROOT" rev-parse HEAD &>/dev/null 2>&1; then
     echo "Error: Git repository must have at least one commit (or git command timed out)" >&2
     exit 1
 fi
@@ -471,8 +556,17 @@ if [[ "$PLAN_FILE" == *[\;\&\|\$\`\<\>\(\)\{\}\[\]\!\#\~\*\?\\]* ]]; then
     exit 1
 fi
 
-# Build full path
-FULL_PLAN_PATH="$PROJECT_ROOT/$PLAN_FILE"
+# Build full path (relative plan paths resolve from caller's cwd, not repo root)
+FULL_PLAN_PATH="$PLAN_RESOLUTION_BASE/$PLAN_FILE"
+
+# Normalize PLAN_FILE to PROJECT_ROOT-relative so that later git operations,
+# state.md persistence, and stop-hook FULL_PLAN_PATH reconstruction all use the
+# same base directory (PROJECT_ROOT).  Without this, a plan.md invoked from
+# nested/subdir would be stored as "plan.md" but looked up as "$PROJECT_ROOT/plan.md"
+# instead of "$PROJECT_ROOT/nested/subdir/plan.md".
+if [[ "$FULL_PLAN_PATH" == "$PROJECT_ROOT/"* ]]; then
+    PLAN_FILE="${FULL_PLAN_PATH#"$PROJECT_ROOT/"}"
+fi
 
 # Reject symlinks (file itself)
 if [[ -L "$FULL_PLAN_PATH" ]]; then
@@ -891,6 +985,7 @@ review_started: $INITIAL_REVIEW_STARTED
 ask_codex_question: $ASK_CODEX_QUESTION
 session_id:
 agent_teams: $AGENT_TEAMS
+build_provider: $BUILD_PROVIDER
 privacy_mode: $PRIVACY_MODE
 bitlesson_required: $BITLESSON_STATE_VALUE
 bitlesson_file: $BITLESSON_FILE_REL
@@ -1125,7 +1220,16 @@ cat >> "$GOAL_TRACKER_FILE" << 'GOAL_TRACKER_EOF'
 <!-- Mainline tasks only: each task must directly advance the current round objective and carry routing metadata -->
 | Task | Target AC | Status | Tag | Owner | Notes |
 |------|-----------|--------|-----|-------|-------|
-| [To be populated by Claude based on plan] | - | pending | coding or analyze | claude or codex | mainline task only |
+GOAL_TRACKER_EOF
+
+# Emit the Active Tasks placeholder row with the resolved build provider so the
+# generated tracker shows "claude" or "codex" as the Owner, not a literal
+# "$BUILD_PROVIDER" string. Keep this outside the single-quoted heredoc so shell
+# expansion actually happens.
+printf '| [To be populated by build agent based on plan] | - | pending | coding or analyze | %s | mainline task only |\n' \
+    "$BUILD_PROVIDER" >> "$GOAL_TRACKER_FILE"
+
+cat >> "$GOAL_TRACKER_FILE" << 'GOAL_TRACKER_EOF'
 
 ### Blocking Side Issues
 <!-- Only issues that directly block current mainline progress belong here -->
@@ -1332,10 +1436,10 @@ Rules:
 
 Each task must have one routing tag from the plan: \`coding\` or \`analyze\`.
 
-- Tag \`coding\`: Claude executes the task directly.
-- Tag \`analyze\`: Claude must execute via \`/humanize:ask-codex\`, then integrate Codex output.
-- Keep Goal Tracker "Active Tasks" columns **Tag** and **Owner** aligned with execution (\`coding -> claude\`, \`analyze -> codex\`).
-- If a task has no explicit tag, default to \`coding\` (Claude executes directly).
+- Tag \`coding\`: The build agent ($BUILD_PROVIDER) executes the task directly.
+- Tag \`analyze\`: The build agent must execute via \`${SCRIPT_DIR}/ask-codex.sh\`, then integrate Codex output.
+- Keep Goal Tracker "Active Tasks" columns **Tag** and **Owner** aligned with execution (\`coding -> $BUILD_PROVIDER\`, \`analyze -> codex\`).
+- If a task has no explicit tag, default to \`coding\` (build agent executes directly).
 
 EOF
 
@@ -1449,6 +1553,7 @@ if [[ "$SKIP_IMPL" == "true" ]]; then
 === start-rlcr-loop activated (SKIP-IMPL MODE) ===
 
 Mode: Code Review Only (--skip-impl)
+Build Provider: $BUILD_PROVIDER
 Start Branch: $START_BRANCH
 Base Branch: $BASE_BRANCH
 Codex Model: $CODEX_MODEL
@@ -1464,7 +1569,7 @@ The loop will:
 2. If issues are found ([P0-9] markers), you'll need to fix them
 3. When no issues remain, enters Finalize Phase and loop ends
 
-To cancel: /humanize:cancel-rlcr-loop
+To cancel: ${SCRIPT_DIR}/cancel-rlcr-loop.sh
 
 ---
 
@@ -1475,6 +1580,7 @@ else
 
 Plan File: $PLAN_FILE ($LINE_COUNT lines)
 Plan Tracked: $TRACK_PLAN_FILE
+Build Provider: $BUILD_PROVIDER
 Start Branch: $START_BRANCH
 Base Branch: $BASE_BRANCH
 Max Iterations: $MAX_ITERATIONS
@@ -1493,7 +1599,7 @@ The loop is now active. When you try to exit:
 4. Code review checks for [P0-9] issues; if found, you fix them
 5. When no issues found, enters Finalize Phase and loop ends
 
-To cancel: /humanize:cancel-rlcr-loop
+To cancel: ${SCRIPT_DIR}/cancel-rlcr-loop.sh
 
 ---
 

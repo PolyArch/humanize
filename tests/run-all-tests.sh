@@ -91,10 +91,13 @@ TEST_SUITES=(
     "test-agent-teams.sh"
     # Ask Codex tests
     "test-ask-codex.sh"
+    # Gemini helper migration regression
+    "test-ask-gemini-migration.sh"
     # Bitlesson routing tests
     "test-bitlesson-select-routing.sh"
     # Provider routing tests
     "test-model-router.sh"
+    "test-build-provider-routing.sh"
     # Skill monitor tests
     "test-skill-monitor.sh"
     # Robustness tests

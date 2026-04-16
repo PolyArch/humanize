@@ -109,16 +109,12 @@ Minimum viable implementation
 ## Usage
 
 ```bash
-# Start the flow
-/flow:humanize-gen-plan
-
-# The flow will ask for:
-# - Input draft file path
-# - Output plan file path
+# Codex CLI
+Run the humanize-gen-plan skill with --input path/to/draft.md --output path/to/plan.md
 ```
 
-Or with the skill only (no auto-execution):
+The flow will ask for:
+- Input draft file path
+- Output plan file path
 
-```bash
-/skill:humanize-gen-plan
-```
+On runtimes with explicit skill-mode support, you can also invoke the installed skill directly with `/skill:humanize-gen-plan`.

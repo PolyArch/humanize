@@ -27,7 +27,7 @@ set -euo pipefail
 HOOK_INPUT=$(cat)
 
 # Determine project root
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 # Check for pending session_id signal file
 SIGNAL_FILE="$PROJECT_ROOT/.humanize/.pending-session-id"

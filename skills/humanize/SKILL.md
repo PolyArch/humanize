@@ -80,9 +80,10 @@ After each round, write the required summary and stop/exit normally. Humanize's 
 - `--skip-impl` - Skip implementation phase, go directly to code review
 - `--track-plan-file` - Enforce plan-file immutability when tracked in git
 - `--push-every-round` - Require git push after each round
-- `--claude-answer-codex` - Let Claude answer Codex Open Questions directly (default is AskUserQuestion)
+- `--build-provider claude|codex` - Which runtime builds the code (default: codex). Review is always Codex.
+- `--answer-open-question` - Answer Codex Open Questions directly instead of asking user (default is AskUserQuestion)
 - `--agent-teams` - Enable Agent Teams mode
-- `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
+- `--yolo` - Skip Plan Understanding Quiz and enable --answer-open-question
 - `--skip-quiz` - Skip the Plan Understanding Quiz only
 - `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
 

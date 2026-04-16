@@ -5,7 +5,7 @@ State file is missing required field: `{{FIELD_NAME}}`
 This indicates the session was started with an older version of humanize.
 
 **Options:**
-1. Cancel the session: `/humanize:cancel-rlcr-loop`
+1. Cancel the session: `cancel-rlcr-loop.sh`
 2. Update humanize plugin to version 1.1.2+
 3. Restart with the updated plugin
 

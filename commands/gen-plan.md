@@ -25,7 +25,7 @@ Permitted writes (before any optional auto-start) are limited to:
 - The plan output file (`--output`)
 - Optional translated language variant (only when `ALT_PLAN_LANGUAGE` is configured)
 
-If `--auto-start-rlcr-if-converged` is enabled, the command MAY immediately start the RLCR loop by running `/humanize:start-rlcr-loop <output-plan-path>`, but only in `discussion` mode when `PLAN_CONVERGENCE_STATUS=converged` and there are no pending user decisions. All coding happens in that subsequent command/loop, not during plan generation.
+If `--auto-start-rlcr-if-converged` is enabled, the command MAY immediately start the RLCR loop by invoking the installed RLCR entrypoint for the current runtime, but only in `discussion` mode when `PLAN_CONVERGENCE_STATUS=converged` and there are no pending user decisions. All coding happens in that subsequent command/loop, not during plan generation.
 
 This command transforms a user's draft document into a well-structured implementation plan with clear goals, acceptance criteria (AC-X format), path boundaries, and feasibility suggestions.
 
@@ -38,8 +38,8 @@ This command transforms a user's draft document into a well-structured implement
 3. **IO Validation**: Validate input and output paths
 4. **Relevance Check**: Verify draft is relevant to the repository
 5. **Codex First-Pass Analysis**: Use one planning Codex before Claude synthesizes plan details
-6. **Claude Candidate Plan (v1)**: Claude builds an initial plan from draft + Codex findings
-7. **Iterative Convergence Loop**: Claude and a second Codex iteratively challenge/refine plan reasonability
+6. **Candidate Plan (v1)**: Build agent creates an initial plan from draft + Codex findings
+7. **Iterative Convergence Loop**: Build agent and a second Codex iteratively challenge/refine plan reasonability
 8. **Issue and Disagreement Resolution**: Resolve unresolved opposite opinions (or skip manual review if converged, auto-start mode is enabled, and `GEN_PLAN_MODE=discussion`)
 9. **Final Plan Generation**: Generate the converged structured plan.md with task routing tags
 10. **Write and Complete**: Write output file, optionally write translated language variant, optionally auto-start implementation, and report results
@@ -55,7 +55,7 @@ Parse `$ARGUMENTS` and set:
 - `GEN_PLAN_MODE_DIRECT=true` if `--direct` is present
 - If both `--discussion` and `--direct` are present simultaneously, report error "Cannot use --discussion and --direct together" and stop
 
-`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking `/humanize:start-rlcr-loop <output-plan-path>`), but only when `GEN_PLAN_MODE=discussion`, plan convergence is achieved, and no pending user decisions remain. In `direct` mode this condition is never satisfied.
+`AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking the installed RLCR entrypoint for the current runtime), but only when `GEN_PLAN_MODE=discussion`, plan convergence is achieved, and no pending user decisions remain. In `direct` mode this condition is never satisfied.
 
 ---
 
@@ -213,7 +213,7 @@ If `ask-codex.sh` fails (missing Codex CLI, timeout, or runtime error), use AskU
 
 ---
 
-## Phase 4: Claude Candidate Plan (v1)
+## Phase 4: Candidate Plan (v1)
 
 Use draft content + Codex Analysis v1 to produce an initial candidate plan and issue map.
 
@@ -320,8 +320,8 @@ Before proceeding (regardless of `HUMAN_REVIEW_REQUIRED`), consolidate all user-
 3. Deduplicate: if the same topic appears in both sources, merge into one entry
 4. For each collected item, check if it was substantively resolved during Phase 4-5 plan refinement (i.e., Claude addressed it and second Codex agreed in a subsequent round). Remove only items with clear evidence of resolution.
 5. Write all remaining unresolved items into the plan's `## Pending User Decisions` section. Use `DEC-N` identifiers. Set `Decision Status` to `PENDING`.
-   - For Claude-vs-Codex disagreements: fill `Claude Position`, `Codex Position`, and `Tradeoff Summary`
-   - For open questions (no opposing positions): set `Claude Position` to Claude's tentative answer (if any), `Codex Position` to `N/A - open question`, and `Tradeoff Summary` to the question's context
+   - For Claude-vs-Codex disagreements: fill `Build Position`, `Review Position`, and `Tradeoff Summary`
+   - For open questions (no opposing positions): set `Build Position` to Claude's tentative answer (if any), `Review Position` to `N/A - open question`, and `Tradeoff Summary` to the question's context
 
 This ensures:
 - When `HUMAN_REVIEW_REQUIRED=true`: items are visible for Steps 2-4 user resolution
@@ -447,21 +447,21 @@ Example: "The implementation includes core feature X with basic validation"
 ## Task Breakdown
 
 Each task must include exactly one routing tag:
-- `coding`: implemented by Claude
-- `analyze`: executed via Codex (`/humanize:ask-codex`)
+- `coding`: implemented by the build agent
+- `analyze`: executed via Codex (the installed `ask-codex.sh` helper)
 
 | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
 |---------|-------------|-----------|----------------------------|------------|
 | task1 | <...> | AC-1 | coding | - |
 | task2 | <...> | AC-2 | analyze | task1 |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 
 ### Agreements
 - <Point both sides agree on>
 
 ### Resolved Disagreements
-- <Topic>: Claude vs Codex summary, chosen resolution, and rationale
+- <Topic>: Build vs Review summary, chosen resolution, and rationale
 
 ### Convergence Status
 - Final Status: `converged` or `partially_converged`
@@ -469,8 +469,8 @@ Each task must include exactly one routing tag:
 ## Pending User Decisions
 
 - DEC-1: <Decision topic>
-  - Claude Position: <...>
-  - Codex Position: <...>
+  - Build Position: <...>
+  - Review Position: <...>
   - Tradeoff Summary: <...>
   - Decision Status: `PENDING` or `<User's final decision>`
 
@@ -524,7 +524,7 @@ When `alternative_plan_language` is empty, absent, set to `"English"`, or set to
 
 12. **Debate Traceability**: The plan MUST include Codex-first findings, Claude/Codex agreements, resolved disagreements, and unresolved decisions. Unresolved opposite opinions MUST be recorded in `## Pending User Decisions` for explicit user decision.
 
-13. **Convergence Requirement**: The plan MUST record Claude/Codex agreements, resolved disagreements, and final convergence status in `## Claude-Codex Deliberation`. Stop only when convergence conditions are met or max rounds reached with explicit carry-over decisions.
+13. **Convergence Requirement**: The plan MUST record Claude/Codex agreements, resolved disagreements, and final convergence status in `## Plan Convergence Record`. Stop only when convergence conditions are met or max rounds reached with explicit carry-over decisions.
 
 14. **Task Tag Requirement**: The plan MUST include `## Task Breakdown`, and every task MUST be tagged as either `coding` or `analyze` (no untagged tasks, no other tag values).
 
@@ -602,7 +602,7 @@ If all of the following are true:
 Then start work immediately by running:
 
 ```bash
-/humanize:start-rlcr-loop --skip-quiz <output-plan-path>
+Run the humanize-rlcr skill with --skip-quiz --plan-file <output-plan-path>
 ```
 
 The `--skip-quiz` flag is passed because the user has already demonstrated understanding of the plan through the gen-plan convergence discussion.
@@ -616,7 +616,7 @@ If the command invocation is not available in this context, fall back to the set
 If the auto-start attempt fails, report the failure reason and provide the exact manual command for the user to run:
 
 ```bash
-/humanize:start-rlcr-loop <output-plan-path>
+Run the humanize-rlcr skill with --plan-file <output-plan-path>
 ```
 
 ### Step 6: Report Results
@@ -640,7 +640,7 @@ If issues arise during plan generation that require user input:
 
 If auto-start mode is enabled but convergence conditions are not met:
 - Explain why direct start was skipped
-- Tell the user to either resolve pending decisions or run `/humanize:start-rlcr-loop <plan.md>` manually
+- Tell the user to either resolve pending decisions or manually run the `humanize-rlcr` skill with `--plan-file <plan.md>`
 
 If unable to generate a complete plan:
 - Explain what information is missing

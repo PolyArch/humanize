@@ -57,7 +57,7 @@ if is_round_file_type "$FILE_PATH_LOWER" "todos"; then
     PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
     LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
     LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")
-    if [[ -z "$LOOP_DIR" ]] || ! is_allowlisted_file "$FILE_PATH" "$LOOP_DIR"; then
+    if [[ -z "$LOOP_DIR" ]] || ! is_allowlisted_file "$FILE_PATH" "$LOOP_DIR" "read"; then
         todos_blocked_message "Read" >&2
         exit 2
     fi
@@ -282,7 +282,7 @@ fi
 # Validate Round Number
 # ========================================
 
-if [[ "$CLAUDE_ROUND" != "$CURRENT_ROUND" ]] && ! is_allowlisted_file "$FILE_PATH" "$ACTIVE_LOOP_DIR"; then
+if [[ "$CLAUDE_ROUND" != "$CURRENT_ROUND" ]] && ! is_allowlisted_file "$FILE_PATH" "$ACTIVE_LOOP_DIR" "read"; then
     FALLBACK="# Wrong Round File
 
 You tried to read round-{{CLAUDE_ROUND}}-{{FILE_TYPE}}.md but current round is **{{CURRENT_ROUND}}**.

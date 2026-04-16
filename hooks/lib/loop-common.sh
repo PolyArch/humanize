@@ -38,6 +38,7 @@ readonly FIELD_FULL_REVIEW_ROUND="full_review_round"
 readonly FIELD_ASK_CODEX_QUESTION="ask_codex_question"
 readonly FIELD_SESSION_ID="session_id"
 readonly FIELD_AGENT_TEAMS="agent_teams"
+readonly FIELD_BUILD_PROVIDER="build_provider"
 readonly FIELD_PRIVACY_MODE="privacy_mode"
 readonly FIELD_MAINLINE_STALL_COUNT="mainline_stall_count"
 readonly FIELD_LAST_MAINLINE_VERDICT="last_mainline_verdict"
@@ -220,7 +221,18 @@ DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-${_cfg_codex_effort:-high}}"
 # Precedence: pre-set by caller (e.g. --agent-teams flag) > config value > hardcoded fallback (false)
 _cfg_agent_teams="$(get_config_value "$_LOOP_COMMON_CONFIG" "agent_teams" 2>/dev/null || true)"
 DEFAULT_AGENT_TEAMS="${DEFAULT_AGENT_TEAMS:-${_cfg_agent_teams:-false}}"
-unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams
+
+# Load build_provider from merged config (controls whether build uses claude or codex)
+# Precedence: pre-set by caller (e.g. --build-provider flag) > config value > hardcoded fallback (codex)
+_cfg_build_provider="$(get_config_value "$_LOOP_COMMON_CONFIG" "build_provider" 2>/dev/null || true)"
+if [[ -n "$_cfg_build_provider" && "$_cfg_build_provider" != "claude" && "$_cfg_build_provider" != "codex" ]]; then
+    echo "Warning: Invalid build_provider in merged config: $_cfg_build_provider" >&2
+    echo "  Must be 'claude' or 'codex'" >&2
+    echo "  Ignoring configured build_provider; using caller preset or fallback" >&2
+    _cfg_build_provider=""
+fi
+DEFAULT_BUILD_PROVIDER="${DEFAULT_BUILD_PROVIDER:-${_cfg_build_provider:-codex}}"
+unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams _cfg_build_provider
 
 unset _LOOP_COMMON_PROJECT_ROOT _LOOP_COMMON_CONFIG
 
@@ -403,6 +415,7 @@ _parse_state_fields() {
     STATE_ASK_CODEX_QUESTION=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_ASK_CODEX_QUESTION}:" | sed "s/${FIELD_ASK_CODEX_QUESTION}: *//" | tr -d ' ' || true)
     STATE_SESSION_ID=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_SESSION_ID}:" | sed "s/${FIELD_SESSION_ID}: *//" || true)
     STATE_AGENT_TEAMS=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_AGENT_TEAMS}:" | sed "s/${FIELD_AGENT_TEAMS}: *//" | tr -d ' ' || true)
+    STATE_BUILD_PROVIDER=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_BUILD_PROVIDER}:" | sed "s/${FIELD_BUILD_PROVIDER}: *//" | tr -d ' ' || true)
     STATE_PRIVACY_MODE=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_PRIVACY_MODE}:" | sed "s/${FIELD_PRIVACY_MODE}: *//" | tr -d ' ' || true)
     STATE_MAINLINE_STALL_COUNT=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_MAINLINE_STALL_COUNT}:" | sed "s/${FIELD_MAINLINE_STALL_COUNT}: *//" | tr -d ' ' || true)
     STATE_LAST_MAINLINE_VERDICT=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_LAST_MAINLINE_VERDICT}:" | sed "s/${FIELD_LAST_MAINLINE_VERDICT}: *//" | tr -d ' ' || true)
@@ -427,6 +440,7 @@ _parse_state_fields() {
 #   STATE_FULL_REVIEW_ROUND - interval for Full Alignment Check (default: 5)
 #   STATE_ASK_CODEX_QUESTION - "true" or "false" (v1.6.5+)
 #   STATE_AGENT_TEAMS - "true" or "false"
+#   STATE_BUILD_PROVIDER - "claude" or "codex" (default: "claude")
 #   STATE_MAINLINE_STALL_COUNT - consecutive stalled/regressed implementation rounds
 #   STATE_LAST_MAINLINE_VERDICT - advanced/stalled/regressed/unknown
 #   STATE_DRIFT_STATUS - normal/replan_required
@@ -452,6 +466,9 @@ parse_state_file() {
     STATE_FULL_REVIEW_ROUND="${STATE_FULL_REVIEW_ROUND:-5}"
     STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-true}"
     STATE_AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
+    # Default build_provider to "claude" for backward compat with older state
+    # files that pre-date this field and historically represented Claude-built loops.
+    STATE_BUILD_PROVIDER="${STATE_BUILD_PROVIDER:-claude}"
     # Default privacy_mode to "true" for legacy loops that pre-date this field
     STATE_PRIVACY_MODE="${STATE_PRIVACY_MODE:-true}"
     STATE_MAINLINE_STALL_COUNT="${STATE_MAINLINE_STALL_COUNT:-0}"
@@ -760,6 +777,7 @@ extract_round_number() {
 is_allowlisted_file() {
     local file_path="$1"
     local active_loop_dir="$2"
+    local access_mode="${3:-default}"
 
     local allowlist=(
         "round-1-todos.md"
@@ -773,6 +791,10 @@ is_allowlisted_file() {
             return 0
         fi
     done
+
+    if [[ "$access_mode" == "read" ]] && [[ "$file_path" == "$active_loop_dir"/round-*-summary.md ]]; then
+        return 0
+    fi
 
     return 1
 }

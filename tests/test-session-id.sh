@@ -383,6 +383,44 @@ else
 fi
 
 # ========================================
+# Test: cancel script finds repo-root loop when invoked from subdirectory
+# ========================================
+
+setup_test_dir
+init_test_git_repo "$TEST_DIR/project"
+mkdir -p "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00"
+mkdir -p "$TEST_DIR/project/nested/subdir"
+
+cat > "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00/state.md" << 'EOF'
+---
+current_round: 2
+max_iterations: 10
+session_id: leader-session-id
+review_started: false
+base_branch: main
+plan_tracked: false
+start_branch: main
+---
+EOF
+
+(
+    cd "$TEST_DIR/project/nested/subdir"
+    unset CLAUDE_PROJECT_DIR 2>/dev/null || true
+    CANCEL_OUTPUT=$(bash "$CANCEL_SCRIPT" 2>&1) || true
+    if echo "$CANCEL_OUTPUT" | grep -q "CANCELLED"; then
+        pass "cancel script cancels repo-root loop when invoked from subdirectory"
+    else
+        fail "cancel script cancels repo-root loop when invoked from subdirectory" "CANCELLED in output" "$CANCEL_OUTPUT"
+    fi
+)
+
+if [[ -f "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00/cancel-state.md" ]]; then
+    pass "subdirectory cancel still renames repo-root state to cancel-state.md"
+else
+    fail "subdirectory cancel still renames repo-root state to cancel-state.md" "cancel-state.md exists" "not found"
+fi
+
+# ========================================
 # Test: cancel script finds older active loop when newer is inactive
 # ========================================
 
@@ -823,6 +861,40 @@ else
 fi
 
 # ========================================
+# Test: setup writes pending session signal at repo root from subdirectory
+# ========================================
+
+setup_test_dir
+init_test_git_repo "$TEST_DIR/project"
+
+mkdir -p "$TEST_DIR/project/nested/subdir"
+cat > "$TEST_DIR/project/nested/subdir/plan.md" << 'EOF'
+# Test Plan
+
+This is a test plan with enough content.
+Line 3 with meaningful content.
+Line 4 with more content.
+Line 5 final content line.
+EOF
+
+echo "plan.md" > "$TEST_DIR/project/nested/subdir/.gitignore"
+cd "$TEST_DIR/project/nested/subdir"
+git add .gitignore
+git commit -q -m "Add nested gitignore"
+
+(
+    cd "$TEST_DIR/project/nested/subdir"
+    unset CLAUDE_PROJECT_DIR 2>/dev/null || true
+    bash "$SETUP_SCRIPT" plan.md > /dev/null 2>&1 || true
+)
+
+if [[ -f "$TEST_DIR/project/.humanize/.pending-session-id" ]]; then
+    pass "setup from subdirectory writes pending session signal at repo root"
+else
+    fail "setup from subdirectory writes pending session signal at repo root" "repo-root signal file exists" "not found"
+fi
+
+# ========================================
 # Test: PostToolUse hook rejects command containing marker as substring (false positive)
 # ========================================
 
@@ -1050,6 +1122,55 @@ if [[ -f "$POST_HOOK" ]]; then
 else
     skip "PostToolUse hook accepts tab-delimited unquoted setup invocation" "hook file not found"
     skip "signal file consumed after tab-delimited unquoted invocation" "hook file not found"
+fi
+
+# ========================================
+# Test: PostToolUse hook consumes repo-root signal from subdirectory-started setup
+# ========================================
+
+setup_test_dir
+init_test_git_repo "$TEST_DIR/project"
+mkdir -p "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00"
+mkdir -p "$TEST_DIR/project/.humanize"
+mkdir -p "$TEST_DIR/project/nested/subdir"
+
+cat > "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00/state.md" << 'EOF'
+---
+current_round: 0
+max_iterations: 10
+session_id:
+review_started: false
+base_branch: main
+plan_tracked: false
+start_branch: main
+---
+EOF
+
+printf '%s\n%s\n' "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00/state.md" "$MOCK_SETUP_PATH" > "$TEST_DIR/project/.humanize/.pending-session-id"
+
+if [[ -f "$POST_HOOK" ]]; then
+    MOCK_JSON="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"\\\"${MOCK_SETUP_PATH}\\\" nested/subdir/plan.md\"},\"session_id\":\"subdir-session\",\"transcript_path\":\"/tmp/test\",\"cwd\":\"$TEST_DIR/project/nested/subdir\",\"permission_mode\":\"default\",\"hook_event_name\":\"PostToolUse\"}"
+    (
+        cd "$TEST_DIR/project/nested/subdir"
+        unset CLAUDE_PROJECT_DIR 2>/dev/null || true
+        echo "$MOCK_JSON" | bash "$POST_HOOK" > /dev/null 2>&1 || true
+    )
+
+    RECORDED_ID=$(grep "^session_id:" "$TEST_DIR/project/.humanize/rlcr/2026-01-01_00-00-00/state.md" | sed 's/session_id: *//')
+    if [[ "$RECORDED_ID" == "subdir-session" ]]; then
+        pass "PostToolUse hook records session_id for subdirectory-started setup"
+    else
+        fail "PostToolUse hook records session_id for subdirectory-started setup" "subdir-session" "$RECORDED_ID"
+    fi
+
+    if [[ ! -f "$TEST_DIR/project/.humanize/.pending-session-id" ]]; then
+        pass "repo-root signal file consumed after subdirectory-started setup"
+    else
+        fail "repo-root signal file consumed after subdirectory-started setup" "signal file removed" "still exists"
+    fi
+else
+    skip "PostToolUse hook records session_id for subdirectory-started setup" "hook file not found"
+    skip "repo-root signal file consumed after subdirectory-started setup" "hook file not found"
 fi
 
 # ========================================

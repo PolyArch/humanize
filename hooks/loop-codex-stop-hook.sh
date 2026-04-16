@@ -214,7 +214,7 @@ if [[ -z "$PLAN_TRACKED" || -z "$START_BRANCH" ]]; then
 This indicates the loop was started with an older version of humanize.
 
 **Options:**
-1. Cancel the loop: \`/humanize:cancel-rlcr-loop\`
+1. Cancel the loop: \`cancel-rlcr-loop.sh\`
 2. Update humanize plugin to version 1.1.2+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated" \
@@ -233,7 +233,7 @@ if [[ -z "$REVIEW_STARTED" || ( "$REVIEW_STARTED" != "true" && "$REVIEW_STARTED"
 This indicates the loop was started with an older version of humanize (pre-1.5.0).
 
 **Options:**
-1. Cancel the loop: \`/humanize:cancel-rlcr-loop\`
+1. Cancel the loop: \`cancel-rlcr-loop.sh\`
 2. Update humanize plugin to version 1.5.0+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated (missing review_started)" \
@@ -247,7 +247,7 @@ if [[ -z "$BASE_BRANCH" ]]; then
 This indicates the loop was started with an older version of humanize (pre-1.5.0).
 
 **Options:**
-1. Cancel the loop: \`/humanize:cancel-rlcr-loop\`
+1. Cancel the loop: \`cancel-rlcr-loop.sh\`
 2. Update humanize plugin to version 1.5.0+
 3. Restart the RLCR loop with the updated plugin"
     jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - state schema outdated (missing base_branch)" \
@@ -369,9 +369,9 @@ The plan file \`$PLAN_FILE\` has been modified since the RLCR loop started.
 **Modifying plan files is forbidden during an active RLCR loop.**
 
 If you need to change the plan:
-1. Cancel the current loop: \`/humanize:cancel-rlcr-loop\`
+1. Cancel the current loop: \`cancel-rlcr-loop.sh\`
 2. Update the plan file
-3. Start a new loop: \`/humanize:start-rlcr-loop $PLAN_FILE\`
+3. Start a new loop: \`Run the humanize-rlcr skill with --plan-file $PLAN_FILE\`
 
 Backup available at: \`$BACKUP_PLAN\`"
     REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/plan-file-modified.md" "$FALLBACK" \
@@ -941,7 +941,7 @@ SUMMARY_CONTENT=$(cat "$SUMMARY_FILE")
 
 # Shared prompt section for Goal Tracker Update Requests (used in both Full Alignment and Regular reviews)
 GOAL_TRACKER_SECTION_FALLBACK="## Goal Tracker Updates
-If Claude's summary includes a Goal Tracker Update Request section, apply the requested changes to {{GOAL_TRACKER_FILE}}."
+If the build agent's summary includes a Goal Tracker Update Request section, apply the requested changes to {{GOAL_TRACKER_FILE}}."
 GOAL_TRACKER_UPDATE_SECTION=$(load_and_render_safe "$TEMPLATE_DIR" "codex/goal-tracker-update-section.md" "$GOAL_TRACKER_SECTION_FALLBACK" \
     "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE")
 
@@ -999,9 +999,9 @@ COMMIT_HISTORY_SECTION=$(load_and_render_safe "$TEMPLATE_DIR" "codex/commit-hist
 # Build the review prompt
 FULL_ALIGNMENT_FALLBACK="# Full Alignment Review (Round {{CURRENT_ROUND}})
 
-Review Claude's work against the plan and goal tracker. Check all goals are being met.
+Review the build agent's work against the plan and goal tracker. Check all goals are being met.
 
-## Claude's Summary
+## Build Agent's Summary
 {{SUMMARY_CONTENT}}
 
 {{COMMIT_HISTORY_SECTION}}
@@ -1012,9 +1012,9 @@ Write your review to {{REVIEW_RESULT_FILE}}. End with COMPLETE if done, or list 
 
 REGULAR_REVIEW_FALLBACK="# Code Review (Round {{CURRENT_ROUND}})
 
-Review Claude's work for this round.
+Review the build agent's work for this round.
 
-## Claude's Summary
+## Build Agent's Summary
 {{SUMMARY_CONTENT}}
 
 {{COMMIT_HISTORY_SECTION}}
@@ -1095,7 +1095,22 @@ fi
 SANITIZED_PROJECT_PATH=$(echo "$PROJECT_ROOT" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g')
 CACHE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}"
 CACHE_DIR="$CACHE_BASE/humanize/$SANITIZED_PROJECT_PATH/$LOOP_TIMESTAMP"
-mkdir -p "$CACHE_DIR"
+# The default cache tree may already exist on disk but be read-only (for
+# example, when the user's home is mounted read-only). mkdir -p succeeds in
+# that case even though later file writes will fail. Probe actual write access
+# and fall back to the loop-local cache on any failure.
+cache_dir_writable=false
+if mkdir -p "$CACHE_DIR" 2>/dev/null; then
+    if ( : > "$CACHE_DIR/.humanize-write-probe" ) 2>/dev/null; then
+        rm -f "$CACHE_DIR/.humanize-write-probe" 2>/dev/null || true
+        cache_dir_writable=true
+    fi
+fi
+if [[ "$cache_dir_writable" != "true" ]]; then
+    CACHE_DIR="$LOOP_DIR/cache/$LOOP_TIMESTAMP"
+    mkdir -p "$CACHE_DIR"
+    echo "loop-codex-stop-hook: warning: default cache base not writable, using $CACHE_DIR" >&2
+fi
 
 # portable-timeout.sh already sourced above
 
@@ -1340,14 +1355,15 @@ Focus on the code changes made during this RLCR session. Focus more on changes b
 append_task_tag_routing_note() {
     local prompt_file="$1"
 
-    cat >> "$prompt_file" << 'ROUTING_EOF'
+    local build_label="${STATE_BUILD_PROVIDER:-claude}"
+    cat >> "$prompt_file" << ROUTING_EOF
 
 ## Task Tag Routing Reminder
 
 Follow the plan's per-task routing tags strictly:
-- `coding` task -> Claude executes directly
-- `analyze` task -> execute via `/humanize:ask-codex`, then integrate the result
-- Keep Goal Tracker Active Tasks columns `Tag` and `Owner` aligned with execution
+- \`coding\` task -> ${build_label} executes directly
+- \`analyze\` task -> execute via \`${PLUGIN_ROOT}/scripts/ask-codex.sh\`, then integrate the result
+- Keep Goal Tracker Active Tasks columns \`Tag\` and \`Owner\` aligned with execution
 ROUTING_EOF
 }
 
@@ -1437,7 +1453,7 @@ continue_review_loop_with_issues() {
     sed "s/^current_round: .*/current_round: $round/" "$STATE_FILE" > "$temp_file"
     mv "$temp_file" "$STATE_FILE"
 
-    # Build review-fix prompt for Claude
+    # Build review-fix prompt for the build agent
     local next_prompt_file="$LOOP_DIR/round-${round}-prompt.md"
     local next_summary_file="$LOOP_DIR/round-${round}-summary.md"
     if [[ ! -f "$next_summary_file" ]]; then
@@ -1560,7 +1576,7 @@ Steps to retry:
 2. Write your summary to the expected file
 3. Attempt to exit again
 
-If this error persists, consider canceling and restarting the loop: \`/humanize:cancel-rlcr-loop\`
+If this error persists, consider canceling and restarting the loop: \`cancel-rlcr-loop.sh\`
 
 ## Debug Information
 
@@ -1864,7 +1880,7 @@ This can happen if the state file was manually edited.
 **To fix:**
 Reset the state by canceling and restarting the loop.
 
-Use \`/humanize:cancel-rlcr-loop\` to end this loop."
+Use \`cancel-rlcr-loop.sh\` to end this loop."
         jq -n --arg reason "$REASON" --arg msg "Loop: Blocked - invalid review phase state" \
             '{"decision": "block", "reason": $reason, "systemMessage": $msg}'
         exit 0

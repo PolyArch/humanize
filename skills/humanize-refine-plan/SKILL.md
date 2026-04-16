@@ -77,7 +77,7 @@ The refinement flow must:
   - `## Feasibility Hints and Suggestions`
   - `## Dependencies and Sequence`
   - `## Task Breakdown`
-  - `## Claude-Codex Deliberation`
+  - `## Plan Convergence Record`
   - `## Pending User Decisions`
   - `## Implementation Notes`
 - Preserve optional sections when present, including the original design draft appendix
@@ -144,18 +144,17 @@ Rules:
 ## Usage
 
 ```bash
-# Start the flow
-/flow:humanize-refine-plan
+# Codex CLI
+Run the humanize-refine-plan skill with --input path/to/annotated-plan.md
 
-# The flow will ask for:
-# - Input annotated plan path
-# - Optional output refined plan path
-# - Optional QA directory
-# - Optional execution mode and alternate language
+# Codex CLI with explicit output path
+Run the humanize-refine-plan skill with --input path/to/annotated-plan.md --output path/to/refined-plan.md
 ```
 
-Or with the skill only (no auto-execution):
+The flow will ask for:
+- Input annotated plan path
+- Optional output refined plan path
+- Optional QA directory
+- Optional execution mode and alternate language
 
-```bash
-/skill:humanize-refine-plan
-```
+On runtimes with explicit skill-mode support, you can also invoke the installed skill directly with `/skill:humanize-refine-plan`.

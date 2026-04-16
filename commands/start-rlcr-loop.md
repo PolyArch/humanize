@@ -1,6 +1,6 @@
 ---
 description: "Start iterative loop with Codex review"
-argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--claude-answer-codex] [--agent-teams] [--yolo] [--skip-quiz] [--privacy]"
+argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--build-provider claude|codex] [--answer-open-question] [--agent-teams] [--yolo] [--skip-quiz] [--privacy]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh:*)"
   - "Read"
@@ -117,8 +117,8 @@ If the pre-check passed (or was skipped), and the quiz passed (or was skipped or
 This command starts an iterative development loop where:
 
 1. You execute the implementation plan with task-tag routing
-   - `coding` tasks: Claude executes directly
-   - `analyze` tasks: execute via `/humanize:ask-codex`
+   - `coding` tasks: The build agent (claude or codex, per `--build-provider`) executes directly
+   - `analyze` tasks: execute via the installed `ask-codex.sh` helper
 2. Write a summary of your work to the specified summary file
 3. When you try to exit, Codex reviews your summary
 4. If Codex finds issues, you receive feedback and continue
@@ -133,7 +133,7 @@ This command starts an iterative development loop where:
 
 - A round is NOT one task, one milestone, one stage, or one layer of the plan.
 - If the plan has multiple stages or milestones, they are all completed within a single round before writing the round summary.
-- Intermediate progress checks (e.g., verifying a stage before starting the next) should use manual `ask-codex` calls, not round boundaries.
+- Intermediate progress checks (e.g., verifying a stage before starting the next) should use manual `ask-codex.sh` calls, not round boundaries.
 - Only write `round-N-summary.md` and attempt to exit when you believe ALL tasks in the plan are done.
 
 ## Goal Tracker System
@@ -183,13 +183,13 @@ By default, empty `.humanize/bitlesson.md` does not block `Action: none`; use `-
 
 - Reach the maximum iteration count
 - Codex confirms completion with "COMPLETE", followed by successful code review (no `[P0-9]` issues)
-- User runs `/humanize:cancel-rlcr-loop`
+- User runs the installed `cancel-rlcr-loop.sh` helper
 
 ## Two-Phase System
 
 The RLCR loop has two phases within the active loop:
 
-1. **Implementation Phase**: Work by task tags (`coding -> Claude`, `analyze -> /humanize:ask-codex`), then Codex reviews your summary
+1. **Implementation Phase**: Work by task tags (`coding -> build provider`, `analyze -> ask-codex.sh`), then Codex reviews your summary
 2. **Review Phase**: After COMPLETE, `codex review` checks code quality with `[P0-9]` severity markers
 
 The `--base-branch` option specifies the base branch for code review comparison. If not provided, it auto-detects from: remote default > local main > local master.
@@ -199,7 +199,7 @@ The `--base-branch` option specifies the base branch for code review comparison.
 Use `--skip-impl` to skip the implementation phase and go directly to code review:
 
 ```bash
-/humanize:start-rlcr-loop --skip-impl
+Run the humanize-rlcr skill with --skip-impl
 ```
 
 In this mode:

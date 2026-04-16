@@ -1,12 +1,12 @@
 # Humanize Usage Guide
 
-Detailed usage documentation for the Humanize plugin. For installation, see [Install for Claude Code](install-for-claude.md).
+Detailed usage documentation for the Humanize workflow. For Codex setup, see [Install for Codex](install-for-codex.md). Claude-specific installation notes remain in [Install for Claude Code](install-for-claude.md).
 
 ## How It Works
 
 Humanize creates an iterative feedback loop with two phases:
 
-1. **Implementation Phase**: Claude works on your plan, Codex reviews summaries until COMPLETE
+1. **Implementation Phase**: The build agent (Claude by default, or Codex with `--build-provider codex`) works on your plan, Codex reviews summaries until COMPLETE
 2. **Review Phase**: `codex review --base <branch>` checks code quality with `[P0-9]` severity markers
 
 The loop continues until all acceptance criteria are met or no issues remain.
@@ -37,40 +37,40 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 ### Skipping the Quiz
 
 - `--skip-quiz` -- Skip the quiz only. The rest of the RLCR loop behaves normally.
-- `--yolo` -- Skip the quiz AND let Claude answer Codex's open questions directly (`--claude-answer-codex`). This is full automation mode for users who have already reviewed the plan and want to hand over complete control.
+- `--yolo` -- Skip the quiz AND auto-answer Codex's open questions directly (`--answer-open-question`). This is full automation mode for users who have already reviewed the plan and want to hand over complete control.
 - Plans started via `gen-plan --auto-start-rlcr-if-converged` skip the quiz automatically, because the gen-plan convergence discussion already verified the user's understanding.
 
 ## Typical Planning Flow
 
 1. Generate the initial implementation plan:
    ```bash
-   /humanize:gen-plan --input draft.md --output docs/plan.md
+   Run the humanize-gen-plan skill with --input draft.md --output docs/plan.md
    ```
 2. If the plan is reviewed with comment annotations, refine it and generate a QA ledger:
    ```bash
-   /humanize:refine-plan --input docs/plan.md
+   Run the humanize-refine-plan skill with --input docs/plan.md
    ```
 3. Start the RLCR loop on the refined plan:
    ```bash
-   /humanize:start-rlcr-loop docs/plan.md
+   Run the humanize-rlcr skill with --plan-file docs/plan.md --build-provider codex
    ```
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/start-rlcr-loop <plan.md>` | Start iterative development with Codex review |
-| `/cancel-rlcr-loop` | Cancel active loop |
-| `/gen-plan --input <draft.md> --output <plan.md>` | Generate structured plan from draft |
-| `/refine-plan --input <annotated-plan.md>` | Refine an annotated plan and generate a QA ledger |
-| `/ask-codex [question]` | One-shot consultation with Codex |
+| `humanize-rlcr` | Start iterative development with Codex review |
+| `cancel-rlcr-loop.sh` | Cancel the active loop |
+| `humanize-gen-plan` | Generate a structured plan from a draft |
+| `humanize-refine-plan` | Refine an annotated plan and generate a QA ledger |
+| `ask-codex.sh` | One-shot consultation with Codex |
 
 ## Command Reference
 
 ### start-rlcr-loop
 
 ```
-/humanize:start-rlcr-loop [path/to/plan.md | --plan-file path/to/plan.md] [OPTIONS]
+Run the humanize-rlcr skill with --plan-file path/to/plan.md [OPTIONS]
 
 OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
@@ -88,21 +88,28 @@ OPTIONS:
                          Full Alignment Checks occur at rounds N-1, 2N-1, 3N-1, etc.
   --skip-impl            Skip implementation phase, go directly to code review
                          Plan file is optional when using this flag
-  --claude-answer-codex  When Codex finds Open Questions, let Claude answer them
-                         directly instead of asking user via AskUserQuestion
-  --agent-teams          Enable Claude Code Agent Teams mode for parallel development.
+  --build-provider <claude|codex>
+                         Which runtime builds the code (default: codex).
+                         codex:  Codex implements AND Codex reviews (default runtime)
+                         claude: Legacy compatibility workflow
+                         Review is always performed by Codex regardless of this setting.
+  --answer-open-question When Codex finds Open Questions, answer them directly
+                         instead of asking user via AskUserQuestion
+  --agent-teams          Enable Agent Teams mode for parallel development.
                          Requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 environment variable.
-                         Claude acts as team leader, splitting tasks among team members.
-  --yolo                 Skip Plan Understanding Quiz and let Claude answer Codex Open
-                         Questions directly. Alias for --skip-quiz --claude-answer-codex.
+                         Build agent acts as team leader, splitting tasks among team members.
+  --yolo                 Skip Plan Understanding Quiz and auto-answer Codex Open
+                         Questions directly. Alias for --skip-quiz --answer-open-question.
   --skip-quiz            Skip the Plan Understanding Quiz only (without other changes).
   -h, --help             Show help message
 ```
 
 ### gen-plan
 
+In Codex CLI, ask Codex to run the installed skill, for example: `Run the humanize-gen-plan skill with --input <path/to/draft.md> --output <path/to/plan.md>`. Claude-specific command invocation is documented separately in `docs/install-for-claude.md`.
+
 ```
-/humanize:gen-plan --input <path/to/draft.md> --output <path/to/plan.md> [OPTIONS]
+humanize-gen-plan --input <path/to/draft.md> --output <path/to/plan.md> [OPTIONS]
 
 OPTIONS:
   --input   Path to the input draft file (required)
@@ -123,15 +130,17 @@ Workflow:
 3. Analyzes draft for clarity, consistency, completeness, and functionality
 4. Engages user to resolve any issues found
 5. Generates a structured plan.md with acceptance criteria
-6. Optionally starts `/humanize:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
+6. Optionally starts the RLCR loop if `--auto-start-rlcr-if-converged` conditions are met
 
 If reviewers later annotate the generated plan with comment blocks, run
-`/humanize:refine-plan --input <plan.md>` before starting or resuming implementation.
+the refine-plan flow before starting or resuming implementation.
 
 ### refine-plan
 
+In Codex CLI, ask Codex to run the installed skill, for example: `Run the humanize-refine-plan skill with --input <path/to/annotated-plan.md>`. Claude-specific command invocation is documented separately in `docs/install-for-claude.md`.
+
 ```
-/humanize:refine-plan --input <path/to/annotated-plan.md> [OPTIONS]
+humanize-refine-plan --input <path/to/annotated-plan.md> [OPTIONS]
 
 OPTIONS:
   --input <path>        Path to the annotated plan file (required)
@@ -156,13 +165,13 @@ how each comment was handled.
 
 ```bash
 # Refine a plan in place and write QA output to the default directory
-/humanize:refine-plan --input docs/plan.md
+Run the humanize-refine-plan skill with --input docs/plan.md
 
 # Write the refined plan to a new file and store QA output in a custom directory
-/humanize:refine-plan --input docs/plan.annotated.md --output docs/plan.refined.md --qa-dir docs/plan-qa
+Run the humanize-refine-plan skill with --input docs/plan.annotated.md --output docs/plan.refined.md --qa-dir docs/plan-qa
 
 # Run in direct mode and generate translated variants
-/humanize:refine-plan --input docs/plan.md --direct --alt-language zh
+Run the humanize-refine-plan skill with --input docs/plan.md --direct --alt-language zh
 ```
 
 **Annotated comment block format:**
@@ -236,7 +245,7 @@ translated plan and QA variants by inserting `_<code>` before the file extension
 ### ask-codex
 
 ```
-/humanize:ask-codex [OPTIONS] <question or task>
+ask-codex.sh [OPTIONS] <question or task>
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
@@ -246,7 +255,7 @@ OPTIONS:
   -h, --help             Show help message
 ```
 
-The ask-codex skill sends a one-shot question or task to Codex and returns the response
+The `ask-codex.sh` helper sends a one-shot question or task to Codex and returns the response
 inline. Unlike the RLCR loop, this is a single consultation without iteration -- useful
 for getting a second opinion, reviewing a design, or asking domain-specific questions.
 
@@ -267,6 +276,7 @@ Current built-in keys:
 |-----|---------|-------------|
 | `codex_model` | `gpt-5.4` | Shared default model for Codex-backed review and analysis |
 | `codex_effort` | `high` | Shared default reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `build_provider` | `codex` | Which runtime builds the code: `claude` or `codex`. Review is always Codex. |
 | `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
 | `provider_mode` | unset | Optional runtime mode hint such as `codex-only` |
 | `agent_teams` | `false` | Project-level default for agent teams workflow |
@@ -313,7 +323,7 @@ Set up the monitoring helper for real-time progress tracking:
 
 ```bash
 # Add to your .bashrc or .zshrc
-source ~/.claude/plugins/cache/PolyArch/humanize/<LATEST.VERSION>/scripts/humanize.sh
+source /path/to/humanize/scripts/humanize.sh
 
 # Monitor RLCR loop progress
 humanize monitor rlcr
@@ -324,7 +334,7 @@ Progress data is stored in `.humanize/rlcr/<timestamp>/` for each loop session.
 
 ## Cancellation
 
-- **RLCR loop**: `/humanize:cancel-rlcr-loop`
+- **RLCR loop**: `cancel-rlcr-loop.sh`
 
 ## Environment Variables
 
@@ -356,9 +366,9 @@ Progress data is stored in `.humanize/rlcr/<timestamp>/` for each loop session.
 
 **Usage example**:
 ```bash
-# Export before starting Claude Code
+# Export before starting the Codex or Claude session
 export HUMANIZE_CODEX_BYPASS_SANDBOX=true
 
 # Or set for a single session
-HUMANIZE_CODEX_BYPASS_SANDBOX=true claude --plugin-dir /path/to/humanize
+HUMANIZE_CODEX_BYPASS_SANDBOX=true <your-runtime-command>
 ```

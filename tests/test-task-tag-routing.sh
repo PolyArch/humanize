@@ -102,10 +102,10 @@ else
     fail "round-0 prompt includes task tag routing section" "routing section present" "missing"
 fi
 
-if [[ -n "$PROMPT_FILE" ]] && grep -q "/humanize:ask-codex" "$PROMPT_FILE"; then
-    pass "round-0 prompt includes ask-codex routing for analyze tasks"
+if [[ -n "$PROMPT_FILE" ]] && grep -q "ask-codex.sh" "$PROMPT_FILE"; then
+    pass "round-0 prompt includes ask-codex helper routing for analyze tasks"
 else
-    fail "round-0 prompt includes ask-codex routing for analyze tasks" "ask-codex instruction" "missing"
+    fail "round-0 prompt includes ask-codex helper routing for analyze tasks" "ask-codex.sh instruction" "missing"
 fi
 
 if [[ -n "$GOAL_TRACKER_FILE" ]] && grep -q "^| Task | Target AC | Status | Tag | Owner | Notes |" "$GOAL_TRACKER_FILE"; then
@@ -120,6 +120,7 @@ fi
 
 setup_stophook_repo() {
     local repo_dir="$1"
+    local build_provider="${2:-claude}"
 
     init_test_git_repo "$repo_dir"
     mkdir -p "$repo_dir/plans"
@@ -168,6 +169,7 @@ base_commit: abc123
 review_started: false
 ask_codex_question: false
 full_review_round: 5
+build_provider: $build_provider
 session_id:
 ---
 EOF
@@ -230,10 +232,60 @@ else
     fail "stop hook follow-up prompt includes task tag routing reminder" "routing reminder section" "missing"
 fi
 
-if [[ -f "$NEXT_PROMPT" ]] && grep -q "/humanize:ask-codex" "$NEXT_PROMPT"; then
-    pass "stop hook follow-up prompt includes ask-codex instruction for analyze tasks"
+if [[ -f "$NEXT_PROMPT" ]] && grep -q "ask-codex.sh" "$NEXT_PROMPT"; then
+    pass "stop hook follow-up prompt includes ask-codex helper instruction for analyze tasks"
 else
-    fail "stop hook follow-up prompt includes ask-codex instruction for analyze tasks" "ask-codex instruction in round-1 prompt" "missing"
+    fail "stop hook follow-up prompt includes ask-codex helper instruction for analyze tasks" "ask-codex.sh instruction in round-1 prompt" "missing"
+fi
+
+if [[ -f "$NEXT_PROMPT" ]] && grep -q "/scripts/ask-codex.sh" "$NEXT_PROMPT"; then
+    pass "stop hook follow-up prompt uses full runtime ask-codex.sh path for analyze tasks"
+else
+    fail "stop hook follow-up prompt uses full runtime ask-codex.sh path for analyze tasks" "path ending in /scripts/ask-codex.sh" "missing"
+fi
+
+if [[ -f "$NEXT_PROMPT" ]] && grep -q "claude executes directly" "$NEXT_PROMPT"; then
+    pass "stop hook follow-up prompt defaults coding task owner to claude"
+else
+    fail "stop hook follow-up prompt defaults coding task owner to claude" "coding task -> claude executes directly" "missing"
+fi
+
+setup_test_dir
+setup_stophook_repo "$TEST_DIR/hook-routing-codex" "codex"
+create_mock_codex "$TEST_DIR/hook-routing-codex/bin" "## Review Feedback
+
+Mainline Progress Verdict: STALLED
+
+Issue remains unresolved.
+
+CONTINUE"
+export PATH="$TEST_DIR/hook-routing-codex/bin:$PATH"
+export XDG_CACHE_HOME="$TEST_DIR/hook-routing-codex/.cache"
+echo "$HOOK_INPUT" | CLAUDE_PROJECT_DIR="$TEST_DIR/hook-routing-codex" bash "$STOP_HOOK" > /dev/null 2>&1 || true
+NEXT_PROMPT_CODEX="$TEST_DIR/hook-routing-codex/.humanize/rlcr/2024-02-01_12-00-00/round-1-prompt.md"
+
+if [[ -f "$NEXT_PROMPT_CODEX" ]] && grep -q "## Task Tag Routing Reminder" "$NEXT_PROMPT_CODEX"; then
+    pass "stop hook follow-up prompt keeps task tag routing reminder for codex build provider"
+else
+    fail "stop hook follow-up prompt keeps task tag routing reminder for codex build provider" "routing reminder section" "missing"
+fi
+
+if [[ -f "$NEXT_PROMPT_CODEX" ]] && grep -q "codex executes directly" "$NEXT_PROMPT_CODEX"; then
+    pass "stop hook follow-up prompt routes coding tasks to codex when build_provider=codex"
+else
+    fail "stop hook follow-up prompt routes coding tasks to codex when build_provider=codex" "coding task -> codex executes directly" "missing"
+fi
+
+if [[ -f "$NEXT_PROMPT_CODEX" ]] && grep -q "ask-codex.sh" "$NEXT_PROMPT_CODEX"; then
+    pass "stop hook follow-up prompt keeps ask-codex helper routing for analyze tasks when build_provider=codex"
+else
+    fail "stop hook follow-up prompt keeps ask-codex helper routing for analyze tasks when build_provider=codex" "ask-codex.sh instruction in round-1 prompt" "missing"
+fi
+
+if [[ -f "$NEXT_PROMPT_CODEX" ]] && grep -q "/scripts/ask-codex.sh" "$NEXT_PROMPT_CODEX"; then
+    pass "stop hook codex follow-up prompt uses full runtime ask-codex.sh path"
+else
+    fail "stop hook codex follow-up prompt uses full runtime ask-codex.sh path" "path ending in /scripts/ask-codex.sh" "missing"
 fi
 
 print_test_summary "Task Tag Routing Tests"

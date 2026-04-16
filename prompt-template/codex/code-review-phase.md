@@ -13,7 +13,7 @@ Note: `codex review` does not accept prompt input; it performs automated code re
 
 1. Runs `codex review --base {{BASE_BRANCH}}` to perform automated code review
 2. Scans output for `[P0-9]` severity markers indicating issues
-3. If issues found: Returns fix prompt to Claude for remediation
+3. If issues found: Returns fix prompt to the build agent for remediation
 4. If no issues: Transitions to Finalize Phase
 
 ## Expected Output Format

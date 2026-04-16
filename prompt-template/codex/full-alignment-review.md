@@ -4,13 +4,13 @@ This is a **mandatory checkpoint** (at configurable intervals). You must conduct
 
 ## Original Implementation Plan
 
-**IMPORTANT**: The original plan that Claude is implementing is located at:
+**IMPORTANT**: The original plan that the build agent is implementing is located at:
 @{{PLAN_FILE}}
 
 You MUST read this plan file first to understand the full scope of work before conducting your review.
 
 ---
-## Claude's Work Summary
+## Build Agent's Work Summary
 <!-- CLAUDE's WORK SUMMARY START -->
 {{SUMMARY_CONTENT}}
 <!-- CLAUDE's WORK SUMMARY  END  -->
@@ -53,7 +53,7 @@ Critical blockers: [list if any]
 
 Determine whether the recent rounds are still serving the original plan:
 - Is the current round's mainline objective clear and singular?
-- Has Claude been advancing mainline ACs, or mostly clearing side issues?
+- Has the build agent been advancing mainline ACs, or mostly clearing side issues?
 - Which findings are true **blocking side issues** versus merely **queued side issues**?
 
 Include a short drift summary:
@@ -68,7 +68,7 @@ The `Mainline Progress Verdict` line is mandatory. If you omit it, the Humanize 
 ## Part 3: Implementation Review
 
 - Conduct a deep critical review of the implementation
-- Verify Claude's claims match reality
+- Verify the build agent's claims match reality
 - Identify any gaps, bugs, or incomplete work
 - Reference @{{DOCS_PATH}} for design documents
 
@@ -94,17 +94,17 @@ The project's `.humanize/rlcr/{{LOOP_TIMESTAMP}}/` directory contains the histor
 **Signs of Stagnation** (circuit breaker triggers):
 - Same issues appearing repeatedly across multiple rounds
 - No meaningful progress on Acceptance Criteria over several rounds
-- Claude making the same mistakes repeatedly
+- the build agent making the same mistakes repeatedly
 - Circular discussions without resolution
 - No new code changes despite continued iterations
-- Codex giving similar feedback repeatedly without Claude addressing it
+- Codex giving similar feedback repeatedly without the build agent addressing it
 
 **If development is stagnating**, write **STOP** (as a single word on its own line) as the last line of your review output @{{REVIEW_RESULT_FILE}} instead of COMPLETE.
 
 ## Part 6: Output Requirements
 
 - If issues found OR any AC is NOT MET (including deferred ACs), write your findings to @{{REVIEW_RESULT_FILE}}
-- Include specific action items for Claude to address, classified into:
+- Include specific action items for the build agent to address, classified into:
   - Mainline Gaps
   - Blocking Side Issues
   - Queued Side Issues

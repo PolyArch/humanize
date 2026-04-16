@@ -51,9 +51,9 @@ cd "$TEST_DIR/project"
 git add .gitignore
 git commit -q -m "Add gitignore"
 
-# Run setup with --agent-teams but WITHOUT env var
+# Run setup with --agent-teams but WITHOUT env var, under the supported Claude builder path
 cd "$TEST_DIR/project"
-SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="" CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --agent-teams temp/plan.md 2>&1) || SETUP_EXIT=$?
+SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="" CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --build-provider claude --agent-teams temp/plan.md 2>&1) || SETUP_EXIT=$?
 
 if [[ "${SETUP_EXIT:-0}" -ne 0 ]]; then
     pass "setup with --agent-teams fails without env var"
@@ -70,13 +70,27 @@ fi
 
 # Test: --agent-teams rejects non-"1" values like "0" and "false"
 for BAD_VALUE in "0" "false" "yes" "true"; do
-    SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="$BAD_VALUE" CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --agent-teams temp/plan.md 2>&1) || SETUP_EXIT=$?
+    SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="$BAD_VALUE" CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --build-provider claude --agent-teams temp/plan.md 2>&1) || SETUP_EXIT=$?
     if [[ "${SETUP_EXIT:-0}" -ne 0 ]]; then
         pass "setup rejects CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=$BAD_VALUE"
     else
         fail "setup rejects CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=$BAD_VALUE" "non-zero exit" "exit 0"
     fi
 done
+
+# Test: --agent-teams fails with codex build provider even when env var is set
+SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --agent-teams temp/plan.md 2>&1) || SETUP_EXIT=$?
+if [[ "${SETUP_EXIT:-0}" -ne 0 ]]; then
+    pass "setup with --agent-teams fails when build provider is codex"
+else
+    fail "setup with --agent-teams fails when build provider is codex" "non-zero exit" "exit 0"
+fi
+
+if echo "$SETUP_OUTPUT" | grep -qi -- "--build-provider claude"; then
+    pass "codex agent-teams rejection points user to --build-provider claude"
+else
+    fail "codex agent-teams rejection points user to --build-provider claude" "--build-provider claude in output" "$SETUP_OUTPUT"
+fi
 
 # ========================================
 # Test: --agent-teams succeeds with env var set
@@ -101,7 +115,7 @@ git add .gitignore
 git commit -q -m "Add gitignore"
 
 cd "$TEST_DIR/project"
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --agent-teams temp/plan.md > /dev/null 2>&1 || true
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --build-provider claude --agent-teams temp/plan.md > /dev/null 2>&1 || true
 
 STATE_FILE=$(find "$TEST_DIR/project/.humanize/rlcr" -name "state.md" -type f 2>/dev/null | head -1)
 if [[ -n "$STATE_FILE" ]]; then
@@ -185,6 +199,92 @@ else
     fail "project config enables agent_teams without --agent-teams flag" "agent_teams: true" "$(grep 'agent_teams' "$STATE_FILE" 2>/dev/null || echo 'not found')"
 fi
 
+if [[ -n "$STATE_FILE" ]] && grep -q "^build_provider: claude" "$STATE_FILE"; then
+    pass "legacy agent_teams config preserves claude build provider on startup"
+else
+    fail "legacy agent_teams config preserves claude build provider on startup" "build_provider: claude" "$(grep 'build_provider' "$STATE_FILE" 2>/dev/null || echo 'not found')"
+fi
+
+# ========================================
+# Test: user config can enable agent_teams without CLI flag
+# ========================================
+
+setup_test_dir
+init_test_git_repo "$TEST_DIR/project"
+
+mkdir -p "$TEST_DIR/project/temp" "$TEST_DIR/xdg/humanize"
+cat > "$TEST_DIR/project/temp/plan.md" << 'EOF'
+# Test Plan
+
+This is a test plan with enough content.
+Line 3 with meaningful content.
+Line 4 with more content.
+Line 5 final content line.
+EOF
+
+printf '{"agent_teams": true}' > "$TEST_DIR/xdg/humanize/config.json"
+echo "temp/" > "$TEST_DIR/project/.gitignore"
+cd "$TEST_DIR/project"
+git add .gitignore
+git commit -q -m "Add gitignore"
+
+cd "$TEST_DIR/project"
+XDG_CONFIG_HOME="$TEST_DIR/xdg" CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" \
+    bash "$SETUP_SCRIPT" temp/plan.md > /dev/null 2>&1 || true
+
+STATE_FILE=$(find "$TEST_DIR/project/.humanize/rlcr" -name "state.md" -type f 2>/dev/null | head -1)
+if [[ -n "$STATE_FILE" ]] && grep -q "^agent_teams: true" "$STATE_FILE"; then
+    pass "user config enables agent_teams without --agent-teams flag"
+else
+    fail "user config enables agent_teams without --agent-teams flag" "agent_teams: true" "$(grep 'agent_teams' "$STATE_FILE" 2>/dev/null || echo 'not found')"
+fi
+
+if [[ -n "$STATE_FILE" ]] && grep -q "^build_provider: claude" "$STATE_FILE"; then
+    pass "legacy user agent_teams config preserves claude build provider on startup"
+else
+    fail "legacy user agent_teams config preserves claude build provider on startup" "build_provider: claude" "$(grep 'build_provider' "$STATE_FILE" 2>/dev/null || echo 'not found')"
+fi
+
+# ========================================
+# Test: explicit codex build provider is not silently overridden
+# ========================================
+
+setup_test_dir
+init_test_git_repo "$TEST_DIR/project"
+
+mkdir -p "$TEST_DIR/project/.humanize" "$TEST_DIR/project/temp"
+cat > "$TEST_DIR/project/temp/plan.md" << 'EOF'
+# Test Plan
+
+This is a test plan with enough content.
+Line 3 with meaningful content.
+Line 4 with more content.
+Line 5 final content line.
+EOF
+
+printf '{"agent_teams": true}' > "$TEST_DIR/project/.humanize/config.json"
+echo "temp/" > "$TEST_DIR/project/.gitignore"
+cd "$TEST_DIR/project"
+git add .gitignore
+git commit -q -m "Add gitignore"
+
+cd "$TEST_DIR/project"
+SETUP_EXIT=0
+SETUP_OUTPUT=$(CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" \
+    bash "$SETUP_SCRIPT" --build-provider codex temp/plan.md 2>&1) || SETUP_EXIT=$?
+
+if [[ "${SETUP_EXIT:-0}" -ne 0 ]]; then
+    pass "explicit --build-provider codex still fails when agent_teams comes from legacy config"
+else
+    fail "explicit --build-provider codex still fails when agent_teams comes from legacy config" "non-zero exit" "exit 0"
+fi
+
+if echo "$SETUP_OUTPUT" | grep -qi -- "--build-provider claude"; then
+    pass "explicit codex conflict still points user to --build-provider claude"
+else
+    fail "explicit codex conflict still points user to --build-provider claude" "--build-provider claude in output" "$SETUP_OUTPUT"
+fi
+
 # ========================================
 # Test: parse_state_file reads agent_teams field
 # ========================================
@@ -264,7 +364,8 @@ git add .gitignore
 git commit -q -m "Add gitignore"
 
 cd "$TEST_DIR/project"
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" bash "$SETUP_SCRIPT" --agent-teams temp/plan.md > /dev/null 2>&1 || true
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 CLAUDE_PROJECT_DIR="$TEST_DIR/project" \
+    bash "$SETUP_SCRIPT" --build-provider claude --agent-teams temp/plan.md > /dev/null 2>&1 || true
 
 PROMPT_FILE=$(find "$TEST_DIR/project/.humanize/rlcr" -name "round-0-prompt.md" -type f 2>/dev/null | head -1)
 

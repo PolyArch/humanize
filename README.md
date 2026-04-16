@@ -1,10 +1,10 @@
 # Humanize
 
-**Current Version: 1.16.0**
+**Current Version: 1.16.5**
 
 > Derived from the [GAAC (GitHub-as-a-Context)](https://github.com/SihaoLiu/gaac) project.
 
-A Claude Code plugin that provides iterative development with independent AI review. Build with confidence through continuous feedback loops.
+A Codex-centered workflow for iterative development with independent AI review. Build with confidence through continuous feedback loops.
 
 ## What is RLCR?
 
@@ -13,7 +13,7 @@ A Claude Code plugin that provides iterative development with independent AI rev
 ## Core Concepts
 
 - **Iteration over Perfection** -- Instead of expecting perfect output in one shot, Humanize leverages continuous feedback loops where issues are caught early and refined incrementally.
-- **One Build + One Review** -- Claude implements, Codex independently reviews. No blind spots.
+- **One Build + One Review** -- One agent implements, Codex independently reviews. No blind spots.
 - **Ralph Loop with Swarm Mode** -- Iterative refinement continues until all acceptance criteria are met. Optionally parallelize with Agent Teams.
 - **Begin with the End in Mind** -- Before the loop starts, Humanize verifies that *you* understand the plan you are about to execute. The human must remain the architect. ([Details](docs/usage.md#begin-with-the-end-in-mind))
 
@@ -23,52 +23,60 @@ A Claude Code plugin that provides iterative development with independent AI rev
   <img src="docs/images/rlcr-workflow.svg" alt="RLCR Workflow" width="680"/>
 </p>
 
-The loop has two phases: **Implementation** (Claude works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
+The loop has two phases: **Implementation** (the build agent works, Codex reviews summaries) and **Code Review** (Codex checks code quality with severity markers). Issues feed back into implementation until resolved.
 
 
 ## Install
 
+### Codex CLI
+
 ```bash
-# Add PolyArch marketplace
-/plugin marketplace add PolyArch/humanize
-# If you want to use development branch for experimental features
-/plugin marketplace add PolyArch/humanize#dev
-# Then install humanize plugin
-/plugin install humanize@PolyArch
+./scripts/install-skills-codex.sh
+# Or with the unified installer:
+./scripts/install-skill.sh --target codex
 ```
 
-Requires [codex CLI](https://github.com/openai/codex) for review. See the full [Installation Guide](docs/install-for-claude.md) for prerequisites and alternative setup options.
+Requires Codex CLI `0.114.0` or newer. See [Install for Codex](docs/install-for-codex.md) for the full setup and verification steps.
 
 ## Quick Start
 
+### Codex Build, Codex Review
+
+Codex implements the code and Codex independently reviews in a fully Codex-native workflow.
+
+In Codex CLI, Humanize flows are invoked by asking Codex to run the installed skill.
+
 1. **Generate a plan** from your draft:
    ```bash
-   /humanize:gen-plan --input draft.md --output docs/plan.md
+   Run the humanize-gen-plan skill with --input draft.md --output docs/plan.md
    ```
 
-2. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):
+2. **Refine an annotated plan**:
    ```bash
-   /humanize:refine-plan --input docs/plan.md
+   Run the humanize-refine-plan skill with --input docs/plan.md
    ```
 
 3. **Run the loop**:
    ```bash
-   /humanize:start-rlcr-loop docs/plan.md
+   Run the humanize-rlcr skill with --plan-file docs/plan.md
    ```
 
 4. **Consult Gemini** for deep web research (requires Gemini CLI):
    ```bash
-   /humanize:ask-gemini What are the latest best practices for X?
+   Run the ask-gemini skill with your research question
    ```
 
-5. **Monitor progress (in another terminal, not inside Claude Code)**:
-   ```bash
-   source <path/to/humanize>/scripts/humanize.sh # Or just add it into your .bashec or .zshrc
-   humanize monitor rlcr       # RLCR loop
-   humanize monitor skill      # All skill invocations (codex + gemini)
-   humanize monitor codex      # Codex invocations only
-   humanize monitor gemini     # Gemini invocations only
-   ```
+### Monitoring
+
+Monitor progress in another terminal:
+
+```bash
+source <path/to/humanize>/scripts/humanize.sh # Or add to your .bashrc or .zshrc
+humanize monitor rlcr       # RLCR loop
+humanize monitor skill      # All skill invocations (codex + gemini)
+humanize monitor codex      # Codex invocations only
+humanize monitor gemini     # Gemini invocations only
+```
 
 ## Monitor Dashboard
 
@@ -79,7 +87,6 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
 ## Documentation
 
 - [Usage Guide](docs/usage.md) -- Commands, options, environment variables
-- [Install for Claude Code](docs/install-for-claude.md) -- Full installation instructions
 - [Install for Codex](docs/install-for-codex.md) -- Codex skill runtime setup
 - [Install for Kimi](docs/install-for-kimi.md) -- Kimi CLI skill setup
 - [Configuration](docs/usage.md#configuration) -- Shared config hierarchy and override rules

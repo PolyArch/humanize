@@ -66,7 +66,7 @@ done
 # Find Loop Directory
 # ========================================
 
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
 
 # Source shared loop library for find_active_loop

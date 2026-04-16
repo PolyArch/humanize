@@ -75,10 +75,10 @@ EXIT1=$?
 set -e
 
 if [[ "$EXIT1" -eq 10 ]]; then
-    pass "rlcr-stop-gate default project root uses cwd and blocks active loop"
+    pass "rlcr-stop-gate default project root resolves caller repo root and blocks active loop"
 else
     OUTPUT1=$(cat "$T1_DIR/out.txt" 2>/dev/null || true)
-    fail "rlcr-stop-gate default project root uses cwd and blocks active loop" "exit 10" "exit $EXIT1; output: $OUTPUT1"
+    fail "rlcr-stop-gate default project root resolves caller repo root and blocks active loop" "exit 10" "exit $EXIT1; output: $OUTPUT1"
 fi
 
 if grep -q "^BLOCK:" "$T1_DIR/out.txt" 2>/dev/null; then
@@ -122,7 +122,10 @@ mkdir -p "$T3_DIR/empty-project"
 set +e
 (
     cd "$T3_DIR/empty-project"
-    "$GATE_SCRIPT"
+    # Pass --project-root explicitly so the test is environment-independent:
+    # CLAUDE_PROJECT_DIR (exported in Claude/Codex environments) would otherwise
+    # override the cwd and inspect the active project instead of this empty dir.
+    "$GATE_SCRIPT" --project-root "$T3_DIR/empty-project"
 ) > "$T3_DIR/out.txt" 2>&1
 EXIT3=$?
 set -e
@@ -139,6 +142,54 @@ if grep -q "^ALLOW:" "$T3_DIR/out.txt" 2>/dev/null; then
 else
     OUTPUT3=$(cat "$T3_DIR/out.txt" 2>/dev/null || true)
     fail "rlcr-stop-gate reports ALLOW when no active loop" "output containing ALLOW:" "$OUTPUT3"
+fi
+
+# Test 4: Default resolves to git worktree root even when invoked from a subdir
+T4_DIR="$TEST_DIR/t4"
+mkdir -p "$T4_DIR"
+setup_active_loop_fixture "$T4_DIR/project"
+mkdir -p "$T4_DIR/project/subdir/nested"
+
+set +e
+(
+    cd "$T4_DIR/project/subdir/nested"
+    "$GATE_SCRIPT"
+) > "$T4_DIR/out.txt" 2>&1
+EXIT4=$?
+set -e
+
+if [[ "$EXIT4" -eq 10 ]]; then
+    pass "rlcr-stop-gate default resolves repo root from a nested subdirectory"
+else
+    OUTPUT4=$(cat "$T4_DIR/out.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate default resolves repo root from a nested subdirectory" "exit 10" "exit $EXIT4; output: $OUTPUT4"
+fi
+
+if grep -q "^BLOCK:" "$T4_DIR/out.txt" 2>/dev/null; then
+    pass "rlcr-stop-gate subdirectory invocation reports BLOCK from the repo-root loop"
+else
+    OUTPUT4=$(cat "$T4_DIR/out.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate subdirectory invocation reports BLOCK from the repo-root loop" "output containing BLOCK:" "$OUTPUT4"
+fi
+
+# Test 5: --help text describes the actual default-resolution contract
+set +e
+"$GATE_SCRIPT" --help > "$TEST_DIR/help.txt" 2>&1
+EXIT5=$?
+set -e
+
+if [[ "$EXIT5" -eq 0 ]]; then
+    pass "rlcr-stop-gate --help exits 0"
+else
+    OUTPUT5=$(cat "$TEST_DIR/help.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate --help exits 0" "exit 0" "exit $EXIT5; output: $OUTPUT5"
+fi
+
+if grep -q "git rev-parse --show-toplevel" "$TEST_DIR/help.txt" 2>/dev/null; then
+    pass "rlcr-stop-gate --help documents the git worktree root default"
+else
+    OUTPUT5=$(cat "$TEST_DIR/help.txt" 2>/dev/null || true)
+    fail "rlcr-stop-gate --help documents the git worktree root default" "help output mentioning 'git rev-parse --show-toplevel'" "$OUTPUT5"
 fi
 
 print_test_summary "RLCR Stop Gate Wrapper Test Summary"

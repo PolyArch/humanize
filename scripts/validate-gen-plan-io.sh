@@ -153,7 +153,7 @@ if [[ ! -w "$OUTPUT_DIR" ]]; then
 fi
 
 # All checks passed
-INPUT_LINE_COUNT=$(wc -l < "$INPUT_FILE" | tr -d ' ')
+INPUT_LINE_COUNT=$(awk 'END { print NR }' "$INPUT_FILE")
 echo "VALIDATION_SUCCESS"
 echo "Input file: $INPUT_FILE ($INPUT_LINE_COUNT lines)"
 echo "Output target: $OUTPUT_FILE"

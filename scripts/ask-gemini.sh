@@ -10,7 +10,7 @@
 #   ask-gemini.sh [--gemini-model MODEL] [--gemini-timeout SECONDS] [question...]
 #
 # Output:
-#   stdout: Gemini's response (for Claude to read)
+#   stdout: Gemini's response (for the caller to read)
 #   stderr: Status/debug info (model, log paths)
 #
 # Storage:
@@ -48,7 +48,7 @@ show_help() {
 ask-gemini - One-shot deep-research consultation with Gemini
 
 USAGE:
-  /humanize:ask-gemini [OPTIONS] <question or task>
+  ask-gemini.sh [OPTIONS] <question or task>
 
 OPTIONS:
   --gemini-model <MODEL>
@@ -66,9 +66,9 @@ DESCRIPTION:
   The response is saved to .humanize/skill/<unique-id>/output.md for reference.
 
 EXAMPLES:
-  /humanize:ask-gemini What are the latest best practices for Rust error handling?
-  /humanize:ask-gemini --gemini-model gemini-2.5-pro Review recent CVEs for OpenSSL 3.x
-  /humanize:ask-gemini --gemini-timeout 600 Compare React Server Components vs Astro Islands
+  ask-gemini.sh What are the latest best practices for Rust error handling?
+  ask-gemini.sh --gemini-model gemini-2.5-pro Review recent CVEs for OpenSSL 3.x
+  ask-gemini.sh --gemini-timeout 600 Compare React Server Components vs Astro Islands
 
 ENVIRONMENT:
   HUMANIZE_GEMINI_YOLO
@@ -143,16 +143,16 @@ if ! command -v gemini &>/dev/null; then
     echo "Error: 'gemini' command is not installed or not in PATH" >&2
     echo "" >&2
     echo "Please install Gemini CLI: npm install -g @google/gemini-cli  or  https://github.com/google-gemini/gemini-cli" >&2
-    echo "Then retry: /humanize:ask-gemini <your question>" >&2
+    echo "Then retry: ask-gemini.sh <your question>" >&2
     exit 1
 fi
 
 if [[ -z "$QUESTION" ]]; then
     echo "Error: No question or task provided" >&2
     echo "" >&2
-    echo "Usage: /humanize:ask-gemini [OPTIONS] <question or task>" >&2
+    echo "Usage: ask-gemini.sh [OPTIONS] <question or task>" >&2
     echo "" >&2
-    echo "For help: /humanize:ask-gemini --help" >&2
+    echo "For help: ask-gemini.sh --help" >&2
     exit 1
 fi
 
@@ -292,7 +292,7 @@ if [[ $GEMINI_EXIT_CODE -eq 124 ]]; then
     echo "Error: Gemini timed out after ${GEMINI_TIMEOUT} seconds" >&2
     echo "" >&2
     echo "Try increasing the timeout:" >&2
-    echo "  /humanize:ask-gemini --gemini-timeout $((GEMINI_TIMEOUT * 2)) <your question>" >&2
+    echo "  ask-gemini.sh --gemini-timeout $((GEMINI_TIMEOUT * 2)) <your question>" >&2
     echo "" >&2
     echo "Debug logs: $CACHE_DIR" >&2
 

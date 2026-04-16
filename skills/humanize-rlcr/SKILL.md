@@ -88,10 +88,11 @@ Pass these through `setup-rlcr-loop.sh`:
 | `--base-branch BRANCH` | Base for review phase | auto-detect |
 | `--full-review-round N` | Full alignment interval | 5 |
 | `--skip-impl` | Start directly in review path | false |
+| `--build-provider claude\|codex` | Which runtime builds the code (review is always Codex) | codex |
 | `--push-every-round` | Require push each round | false |
-| `--claude-answer-codex` | Let Claude answer open questions directly | false |
+| `--answer-open-question` | Answer open questions directly instead of asking user | false |
 | `--agent-teams` | Enable agent teams mode | false |
-| `--yolo` | Skip quiz and enable --claude-answer-codex | false |
+| `--yolo` | Skip quiz and enable --answer-open-question | false |
 | `--skip-quiz` | Skip Plan Understanding Quiz (implicit in skill mode) | false |
 
 Review phase `codex review` runs with `gpt-5.4:high`.
@@ -99,11 +100,11 @@ Review phase `codex review` runs with `gpt-5.4:high`.
 ## Usage
 
 ```bash
-# Start with plan file
-/flow:humanize-rlcr path/to/plan.md
+# Codex CLI
+Run the humanize-rlcr skill with --plan-file path/to/plan.md
 
-# Review-only mode
-/flow:humanize-rlcr --skip-impl
+# Codex CLI: review-only mode
+Run the humanize-rlcr skill with --plan-file path/to/plan.md --skip-impl
 ```
 
 ## Cancel

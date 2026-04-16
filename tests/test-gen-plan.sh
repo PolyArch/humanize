@@ -178,7 +178,7 @@ fi
 
 if [[ -f "$GEN_PLAN_CMD" ]]; then
     PHASE3_LINE=$(grep -n "## Phase 3: Codex First-Pass Analysis" "$GEN_PLAN_CMD" | head -1 | cut -d: -f1 || true)
-    PHASE4_LINE=$(grep -n "## Phase 4: Claude Candidate Plan (v1)" "$GEN_PLAN_CMD" | head -1 | cut -d: -f1 || true)
+    PHASE4_LINE=$(grep -n "## Phase 4: Candidate Plan (v1)" "$GEN_PLAN_CMD" | head -1 | cut -d: -f1 || true)
     if [[ -n "$PHASE3_LINE" && -n "$PHASE4_LINE" && "$PHASE3_LINE" -lt "$PHASE4_LINE" ]]; then
         pass "gen-plan command orders codex analysis before claude candidate plan"
     else
@@ -186,10 +186,10 @@ if [[ -f "$GEN_PLAN_CMD" ]]; then
     fi
 fi
 
-if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "## Claude-Codex Deliberation" "$PLAN_TEMPLATE"; then
-    pass "plan template includes Claude-Codex deliberation section"
+if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "## Plan Convergence Record" "$PLAN_TEMPLATE"; then
+    pass "plan template includes Plan Convergence Record section"
 else
-    fail "plan template includes Claude-Codex deliberation section" "Claude-Codex Deliberation section" "missing"
+    fail "plan template includes Plan Convergence Record section" "Plan Convergence Record section" "missing"
 fi
 
 if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "## Pending User Decisions" "$PLAN_TEMPLATE"; then
@@ -683,6 +683,15 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
         pass "validate script accepts --direct flag"
     else
         fail "validate script accepts --direct flag" "accepted" "unknown option error"
+    fi
+
+    # Test: Non-empty single-line input without trailing newline reports 1 logical line
+    printf 'single line without trailing newline' > "$SCRIPT_TEST_DIR/no-trailing-newline.md"
+    OUTPUT=$("$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/no-trailing-newline.md" --output "$SCRIPT_TEST_DIR/no-trailing-newline-plan.md" 2>&1) || true
+    if echo "$OUTPUT" | grep -q "no-trailing-newline.md (1 lines)"; then
+        pass "validate-gen-plan-io: line count handles missing trailing newline"
+    else
+        fail "validate-gen-plan-io: line count handles missing trailing newline" "reports 1 line" "$OUTPUT"
     fi
 
     # Test: --discussion and --direct together are rejected as mutually exclusive

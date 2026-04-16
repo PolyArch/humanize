@@ -362,7 +362,7 @@ Consistency obligations:
 - Task Breakdown still points to existing ACs
 - Task dependencies still reference existing task IDs or `-`
 - Milestones and sequencing remain aligned with the changed scope
-- `Claude-Codex Deliberation` and `Pending User Decisions` reflect the new state
+- `Plan Convergence Record` and `Pending User Decisions` reflect the new state
 - Task routing tags remain exactly `coding` or `analyze`
 
 ### `research_request`
@@ -406,7 +406,7 @@ The refined plan MUST retain these required sections:
 - `## Feasibility Hints and Suggestions`
 - `## Dependencies and Sequence`
 - `## Task Breakdown`
-- `## Claude-Codex Deliberation`
+- `## Plan Convergence Record`
 - `## Pending User Decisions`
 - `## Implementation Notes`
 

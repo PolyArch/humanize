@@ -64,6 +64,17 @@ reset_mock() {
     export MOCK_CODEX_STDERR=""
 }
 
+# Return the most recently modified subdirectory under .humanize/skill
+# in the mock project. Using mtime (ls -dt) avoids the ambiguity of
+# lexicographic sorting on TIMESTAMP-PID-HEX names when several runs
+# land in the same second with non-monotonic PID/random suffixes.
+latest_skill_dir() {
+    local base="$MOCK_PROJECT/.humanize/skill"
+    [[ -d "$base" ]] || return 0
+    # shellcheck disable=SC2012
+    ls -1dt "$base"/*/ 2>/dev/null | head -n 1 | sed 's:/*$::'
+}
+
 # Helper: run ask-codex with mock codex in PATH, inside mock project
 run_ask_codex() {
     (
@@ -230,7 +241,7 @@ else
 fi
 
 # Test: codex error creates metadata with status: error
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && [[ -f "$LATEST_DIR/metadata.md" ]] && grep -q "status: error" "$LATEST_DIR/metadata.md"; then
     pass "codex error creates metadata with status: error"
 else
@@ -249,7 +260,7 @@ else
 fi
 
 # Test: empty response creates metadata with status: empty_response
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && [[ -f "$LATEST_DIR/metadata.md" ]] && grep -q "status: empty_response" "$LATEST_DIR/metadata.md"; then
     pass "empty response creates metadata with status: empty_response"
 else
@@ -268,7 +279,7 @@ else
 fi
 
 # Test: timeout creates metadata with status: timeout
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && [[ -f "$LATEST_DIR/metadata.md" ]] && grep -q "status: timeout" "$LATEST_DIR/metadata.md"; then
     pass "timeout creates metadata with status: timeout"
 else
@@ -331,7 +342,7 @@ echo ""
 reset_mock
 export MOCK_CODEX_STDOUT="model-test"
 run_ask_codex --codex-model "custom-model:high" "model test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && grep -q "Model: custom-model" "$LATEST_DIR/input.md" && grep -q "Effort: high" "$LATEST_DIR/input.md"; then
     pass "--codex-model MODEL:EFFORT parses model and effort"
 else
@@ -342,7 +353,7 @@ fi
 reset_mock
 export MOCK_CODEX_STDOUT="effort-default-test"
 run_ask_codex --codex-model "solo-model" "effort default test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && grep -q "Model: solo-model" "$LATEST_DIR/input.md" && grep -q "Effort: high" "$LATEST_DIR/input.md"; then
     pass "--codex-model MODEL without effort uses default high"
 else
@@ -353,7 +364,7 @@ fi
 reset_mock
 export MOCK_CODEX_STDOUT="separator-test"
 run_ask_codex -- --not-a-flag "is question" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && grep -qF -- "--not-a-flag" "$LATEST_DIR/input.md"; then
     pass "-- separator passes remaining args as question text"
 else
@@ -364,7 +375,7 @@ fi
 reset_mock
 export MOCK_CODEX_STDOUT="timeout-val"
 run_ask_codex --codex-timeout 123 "timeout value test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+LATEST_DIR=$(latest_skill_dir)
 if [[ -n "$LATEST_DIR" ]] && grep -q "Timeout: 123s" "$LATEST_DIR/input.md"; then
     pass "--codex-timeout value is recorded in input.md"
 else

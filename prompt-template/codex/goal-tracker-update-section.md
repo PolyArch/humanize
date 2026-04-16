@@ -1,6 +1,6 @@
 ## Goal Tracker Update Requests (YOUR RESPONSIBILITY)
 
-Claude should normally keep the **mutable section** of `goal-tracker.md` up to date directly. If Claude's summary contains a "Goal Tracker Update Request" section, or if you detect tracker drift during review, YOU must:
+The build agent should normally keep the **mutable section** of `goal-tracker.md` up to date directly. If the build agent's summary contains a "Goal Tracker Update Request" section, or if you detect tracker drift during review, YOU must:
 
 1. **Evaluate the tracker state**: Is the mutable section still aligned with the Ultimate Goal and current AC progress?
 2. **If correction is needed**: Update @{{GOAL_TRACKER_FILE}} yourself with the requested changes:

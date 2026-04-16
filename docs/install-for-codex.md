@@ -33,6 +33,8 @@ This will:
 
 Requires Codex CLI `0.114.0` or newer for native hooks. Older Codex builds are not supported by the Codex install path.
 
+Codex installs use Codex as both the build and review agent by default. You can still pass `--build-provider codex` explicitly or set `"build_provider": "codex"` in config, but the standard branch workflow no longer requires choosing a builder.
+
 ## Verify
 
 ```bash

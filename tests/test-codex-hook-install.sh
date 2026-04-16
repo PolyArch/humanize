@@ -253,6 +253,7 @@ PATH="$FAKE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$FEATURE_LOG" XDG_CONFIG_HOME="$X
     --target codex \
     --codex-config-dir "$CODEX_HOME_DIR" \
     --codex-skills-dir "$CODEX_HOME_DIR/skills" \
+    --command-bin-dir "$COMMAND_BIN_DIR" \
     > "$TEST_DIR/install-2.log" 2>&1
 
 PY_OUTPUT_2="$(
@@ -309,6 +310,8 @@ chmod +x "$UNSUPPORTED_BIN/codex"
 
 set +e
 PATH="$UNSUPPORTED_BIN:$PATH" \
+    XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
+    HUMANIZE_COMMAND_BIN_DIR="$COMMAND_BIN_DIR" \
     "$INSTALL_SCRIPT" \
     --target codex \
     --codex-config-dir "$UNSUPPORTED_HOME" \

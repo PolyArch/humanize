@@ -183,7 +183,7 @@ Reuse config-loader semantics and keep writes atomic.
 |---------|----|-----|---------|
 | task1 | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -222,7 +222,7 @@ Reuse config-loader semantics and keep writes atomic.
 |---------|----|-----|---------|
 | task1 | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -262,7 +262,7 @@ Reuse config-loader semantics and keep writes atomic.
 |---------|----|-----|---------|
 | task1 | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -318,7 +318,7 @@ Hidden inside a code fence.
 |---------|----|-----|---------|
 | hidden | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -359,7 +359,7 @@ Hidden inside an HTML comment.
 |---------|----|-----|---------|
 | hidden | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -409,7 +409,7 @@ Reuse config-loader semantics and keep writes atomic.
 |---------|----|-----|---------|
 | task1 | AC-1 | coding | - |
 
-## Claude-Codex Deliberation
+## Plan Convergence Record
 ### Convergence Status
 partially_converged
 
@@ -759,7 +759,7 @@ assert_file_contains "$REFINE_PLAN_CMD" "- `## Path Boundaries`" "refine-plan.md
 assert_file_contains "$REFINE_PLAN_CMD" "- `## Feasibility Hints and Suggestions`" "refine-plan.md preserves Feasibility Hints and Suggestions section"
 assert_file_contains "$REFINE_PLAN_CMD" "- `## Dependencies and Sequence`" "refine-plan.md preserves Dependencies and Sequence section"
 assert_file_contains "$REFINE_PLAN_CMD" "- `## Task Breakdown`" "refine-plan.md preserves Task Breakdown section"
-assert_file_contains "$REFINE_PLAN_CMD" "- `## Claude-Codex Deliberation`" "refine-plan.md preserves Claude-Codex Deliberation section"
+assert_file_contains "$REFINE_PLAN_CMD" "- `## Plan Convergence Record`" "refine-plan.md preserves Plan Convergence Record section"
 assert_file_contains "$REFINE_PLAN_CMD" "- `## Pending User Decisions`" "refine-plan.md preserves Pending User Decisions section"
 assert_file_contains "$REFINE_PLAN_CMD" "- `## Implementation Notes`" "refine-plan.md preserves Implementation Notes section"
 
@@ -1340,6 +1340,96 @@ if echo "$VALIDATOR_OUTPUT" | grep -q "Output target: $(realpath -m "$NEW_FILE_D
     pass "validate-refine-plan-io: reports the resolved output target"
 else
     fail "validate-refine-plan-io: reports the resolved output target" "$(realpath -m "$NEW_FILE_DIR/refined-plan.md")" "$VALIDATOR_OUTPUT"
+fi
+
+# ========================================
+# Backward compat: legacy "## Claude-Codex Deliberation" section name
+# ========================================
+LEGACY_SECTION_PLAN="$TEST_FIXTURES_DIR/legacy-section-plan.md"
+cat > "$LEGACY_SECTION_PLAN" <<'EOF'
+# Legacy Plan Fixture
+
+## Goal Description
+Refine an older plan generated before Plan Convergence Record was renamed. CMT: keep legacy section ENDCMT
+
+## Acceptance Criteria
+- AC-1: A refined plan is produced.
+
+## Path Boundaries
+Keep refinement inside plan artifacts only.
+
+## Feasibility Hints and Suggestions
+Reuse config-loader semantics and keep writes atomic.
+
+## Dependencies and Sequence
+1. Validate
+2. Extract comments
+3. Write outputs
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| task1 | AC-1 | coding | - |
+
+## Claude-Codex Deliberation
+### Convergence Status
+partially_converged
+
+## Pending User Decisions
+None.
+
+## Implementation Notes
+Remove all reviewer comments from the refined plan.
+EOF
+
+LEGACY_SECTION_QA_DIR="$TEST_FIXTURES_DIR/legacy-section-qa"
+run_validator_capture --input "$LEGACY_SECTION_PLAN" --qa-dir "$LEGACY_SECTION_QA_DIR"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 0 ]]; then
+    pass "validate-refine-plan-io: accepts legacy ## Claude-Codex Deliberation in place of ## Plan Convergence Record"
+else
+    fail "validate-refine-plan-io: accepts legacy ## Claude-Codex Deliberation in place of ## Plan Convergence Record" "0" "$VALIDATOR_EXIT_CODE; output: $VALIDATOR_OUTPUT"
+fi
+
+# Negative: a plan missing BOTH forms must still fail clearly
+MISSING_BOTH_PLAN="$TEST_FIXTURES_DIR/missing-convergence-plan.md"
+cat > "$MISSING_BOTH_PLAN" <<'EOF'
+# Missing Convergence Plan
+
+## Goal Description
+No convergence section at all. CMT: check failure ENDCMT
+
+## Acceptance Criteria
+- AC-1: A refined plan is produced.
+
+## Path Boundaries
+Keep refinement inside plan artifacts only.
+
+## Feasibility Hints and Suggestions
+Reuse config-loader semantics.
+
+## Dependencies and Sequence
+1. Validate.
+
+## Task Breakdown
+| Task ID | AC | Tag | Depends |
+|---------|----|-----|---------|
+| task1 | AC-1 | coding | - |
+
+## Pending User Decisions
+None.
+
+## Implementation Notes
+Remove all reviewer comments.
+EOF
+
+MISSING_BOTH_QA_DIR="$TEST_FIXTURES_DIR/missing-convergence-qa"
+run_validator_capture --input "$MISSING_BOTH_PLAN" --qa-dir "$MISSING_BOTH_QA_DIR"
+if [[ "$VALIDATOR_EXIT_CODE" -eq 4 ]] \
+    && echo "$VALIDATOR_OUTPUT" | grep -q "MISSING_REQUIRED_SECTIONS" \
+    && echo "$VALIDATOR_OUTPUT" | grep -q "Plan Convergence Record"; then
+    pass "validate-refine-plan-io: still rejects a plan that is missing both Plan Convergence Record and the legacy name"
+else
+    fail "validate-refine-plan-io: still rejects a plan that is missing both Plan Convergence Record and the legacy name" "exit 4 with MISSING_REQUIRED_SECTIONS" "exit $VALIDATOR_EXIT_CODE; output: $VALIDATOR_OUTPUT"
 fi
 
 # ========================================

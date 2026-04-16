@@ -109,12 +109,20 @@ else
     fail "round-3-todos.md blocked" "false" "true"
 fi
 
-# Test 6: Non-allowlisted file - round-2-summary.md
-echo "Test 6: round-2-summary.md is NOT allowlisted"
+# Test 6: Non-allowlisted file - round-2-summary.md in default mode
+echo "Test 6: round-2-summary.md is NOT allowlisted by default"
 if ! is_allowlisted_file "$ACTIVE_LOOP_DIR/round-2-summary.md" "$ACTIVE_LOOP_DIR"; then
-    pass "round-2-summary.md is NOT allowlisted"
+    pass "round-2-summary.md is NOT allowlisted by default"
 else
-    fail "round-2-summary.md blocked" "false" "true"
+    fail "round-2-summary.md blocked by default" "false" "true"
+fi
+
+# Test 6a: Historical summaries are read-allowlisted
+echo "Test 6a: round-2-summary.md is allowlisted for read access"
+if is_allowlisted_file "$ACTIVE_LOOP_DIR/round-2-summary.md" "$ACTIVE_LOOP_DIR" "read"; then
+    pass "round-2-summary.md is allowlisted for read access"
+else
+    fail "round-2-summary.md read allowlist" "true" "false"
 fi
 
 # Test 6b: Non-allowlisted file - round-0-contract.md
@@ -343,17 +351,17 @@ else
     fail "Read validator round-3-todos.md" "exit 2 with todos error" "exit $EXIT_CODE, output: $RESULT"
 fi
 
-# Test 18: Read validator blocks round-3-summary.md (not in allowlist)
-echo "Test 18: Read validator blocks round-3-summary.md"
+# Test 18: Read validator allows historical round-3-summary.md
+echo "Test 18: Read validator allows round-3-summary.md"
 HOOK_INPUT='{"tool_name": "Read", "tool_input": {"file_path": "'$LOOP_DIR'/round-3-summary.md"}}'
 set +e
 RESULT=$(echo "$HOOK_INPUT" | "$PROJECT_ROOT/hooks/loop-read-validator.sh" 2>&1)
 EXIT_CODE=$?
 set -e
-if [[ $EXIT_CODE -eq 2 ]] && echo "$RESULT" | grep -qi "round"; then
-    pass "Read validator blocks round-3-summary.md"
+if [[ $EXIT_CODE -eq 0 ]]; then
+    pass "Read validator allows round-3-summary.md"
 else
-    fail "Read validator round-3-summary.md" "exit 2 with round error" "exit $EXIT_CODE, output: $RESULT"
+    fail "Read validator round-3-summary.md" "exit 0" "exit $EXIT_CODE, output: $RESULT"
 fi
 
 # Test 18b: Read validator blocks stale round contract

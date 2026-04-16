@@ -41,6 +41,7 @@ SKILL_NAMES=(
     "humanize-gen-plan"
     "humanize-refine-plan"
     "humanize-rlcr"
+    "ask-gemini"
 )
 
 usage() {
@@ -128,7 +129,9 @@ sync_dir() {
 
     mkdir -p "$dst"
     if command -v rsync >/dev/null 2>&1; then
-        rsync -a --delete "$src/" "$dst/"
+        # Local skill install: do not preserve owner/group so rsync does not
+        # trip on chgrp/chown when the destination mount or user disallows it.
+        rsync -rlptD --no-owner --no-group --delete "$src/" "$dst/"
     else
         # Copy to a temp sibling first so the destination is not destroyed
         # if cp fails partway through (disk full, permission error, etc.).

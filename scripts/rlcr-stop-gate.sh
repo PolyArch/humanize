@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HUMANIZE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 HOOK_SCRIPT="$HUMANIZE_ROOT/hooks/loop-codex-stop-hook.sh"
 
 SESSION_ID="${CLAUDE_SESSION_ID:-}"
@@ -34,7 +34,9 @@ Usage: rlcr-stop-gate.sh [options]
 Options:
   --session-id ID         Session ID forwarded to hook input
   --transcript-path PATH  Transcript path forwarded to hook input
-  --project-root PATH     Project root (default: repo root)
+  --project-root PATH     Project root override. Default: caller's git
+                          worktree root (git rev-parse --show-toplevel),
+                          or caller's cwd when not inside a git worktree.
   --json                  Print raw hook JSON on block
   -h, --help              Show this help
 EOF
