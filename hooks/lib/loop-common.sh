@@ -242,12 +242,29 @@ extract_session_id() {
     printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo ""
 }
 
-# Extract transcript_path from hook JSON input
+# Expand a leading "~" or "~/" in a path to "$HOME" without using eval.
+# Only the bare "~" and "~/..." forms are expanded; "~user/..." and every
+# other input (absolute path, relative path, empty string) is returned verbatim.
+#
+# Usage: expand_leading_tilde "$path"
+#   Prints the normalized path to stdout.
+expand_leading_tilde() {
+    local path="$1"
+    case "$path" in
+        '~')   printf '%s' "${HOME:-}" ;;
+        '~/'*) printf '%s/%s' "${HOME:-}" "${path#'~/'}" ;;
+        *)     printf '%s' "$path" ;;
+    esac
+}
+
+# Extract transcript_path from hook JSON input and expand any leading tilde.
 # Usage: extract_transcript_path "$json_input"
-# Outputs the transcript_path to stdout, or empty string if not available
+# Outputs the transcript_path to stdout, or empty string if not available.
 extract_transcript_path() {
     local input="$1"
-    printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || echo ""
+    local raw
+    raw=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || echo "")
+    expand_leading_tilde "$raw"
 }
 
 # Enumerate background-task ids that have been launched but not yet marked
@@ -275,6 +292,11 @@ extract_transcript_path() {
 #     as "unknown -> do not short-circuit".
 list_pending_background_task_ids() {
     local transcript_path="$1"
+
+    # Normalize a leading tilde so direct callers (tests, ad-hoc scripts)
+    # work correctly even when transcript_path was not routed through
+    # extract_transcript_path.
+    transcript_path=$(expand_leading_tilde "$transcript_path")
 
     if [[ -z "$transcript_path" ]] || [[ ! -f "$transcript_path" ]]; then
         return 1

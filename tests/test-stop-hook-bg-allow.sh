@@ -33,6 +33,16 @@ GATE_SCRIPT="$PROJECT_ROOT/scripts/rlcr-stop-gate.sh"
 
 setup_test_dir
 
+# AC-10 needs a transcript living under $HOME so the hook input can use
+# the "~/..." form. Create the fixture dir in the AC-10 block and extend
+# the EXIT trap set by setup_test_dir to clean both directories on shutdown.
+HOME_FIXTURE_DIR=""
+cleanup_all() {
+    rm -rf "$TEST_DIR"
+    [[ -n "$HOME_FIXTURE_DIR" ]] && rm -rf "$HOME_FIXTURE_DIR"
+}
+trap cleanup_all EXIT
+
 export XDG_CACHE_HOME="$TEST_DIR/.cache"
 mkdir -p "$XDG_CACHE_HOME"
 
@@ -461,6 +471,44 @@ else
     fail "AC-9: rlcr-stop-gate.sh exits 0 with ALLOW when bg tasks are pending" \
         "exit 0 and output containing ALLOW:" \
         "exit $AC9_EXIT; output: $AC9_BODY"
+fi
+
+# ---------------- AC-10 ----------------
+# Regression: real sessions pass transcript_path as "~/.claude/projects/...".
+# Without tilde expansion the file check `[[ -f "~/..." ]]` is always false,
+# so the short-circuit silently misses pending background tasks.
+echo "Test AC-10: '~/...' transcript path still triggers short-circuit"
+AC10_REPO="$TEST_DIR/ac10"
+AC10_LOOP=$(create_full_fixture "$AC10_REPO")
+AC10_STATE="$AC10_LOOP/state.md"
+
+HOME_FIXTURE_DIR=$(mktemp -d "$HOME/.humanize-bg-allow-test-XXXXXX")
+AC10_TRANSCRIPT="$HOME_FIXTURE_DIR/ac10.jsonl"
+AC10_LAUNCH=$(emit_tool_use_assistant "toolu_H" "Agent" ',"description":"x","prompt":"x"')
+AC10_RESULT=$(emit_async_agent_launch_result "toolu_H" "agent_pending_H")
+write_transcript "$AC10_TRANSCRIPT" "$AC10_LAUNCH" "$AC10_RESULT"
+
+# Build the tilde-form string literally. Do NOT let the shell expand "~".
+AC10_TILDE_PATH="~/${AC10_TRANSCRIPT#$HOME/}"
+AC10_INPUT=$(jq -c -n --arg tp "$AC10_TILDE_PATH" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC10_REPO" "$AC10_INPUT"
+assert_systemmessage_only \
+    "AC-10: '~/'-prefixed transcript_path is expanded and short-circuits on pending bg" \
+    "$AC10_REPO" "$AC10_STATE" "1 background task"
+
+# Also prove the helper works directly against a "~/..." argument.
+# This avoids masking a helper regression behind the hook's own expansion.
+AC10_HELPER_OUT=$(
+    cd "$AC10_REPO"
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$AC10_TILDE_PATH" 2>/dev/null | sort -u
+)
+if printf '%s\n' "$AC10_HELPER_OUT" | grep -qx 'agent_pending_H'; then
+    pass "AC-10b: list_pending_background_task_ids expands '~/...' directly"
+else
+    fail "AC-10b: list_pending_background_task_ids expands '~/...' directly" \
+        "output containing 'agent_pending_H'" "$AC10_HELPER_OUT"
 fi
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
