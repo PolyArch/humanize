@@ -616,7 +616,45 @@ fi
 
 if [[ "$IS_METHODOLOGY_ANALYSIS_PHASE" == "true" ]]; then
     if complete_methodology_analysis; then
-        # Analysis complete, allow exit
+        # Before allowing the terminal state transition, re-verify the
+        # working tree is clean. The main git-clean gate below is skipped
+        # in the methodology branch, so without this check, tracked edits
+        # made during the analysis phase (e.g. post-signoff source
+        # modifications) could slip through unreviewed as soon as the
+        # completion marker appears.
+        #
+        # Apply the same .humanize/ untracked exclusion the main gate uses
+        # so methodology-artifact writes under .humanize/rlcr/... do not
+        # themselves trip the check.
+        if [[ "$GIT_IS_REPO" == "true" ]]; then
+            HUMANIZE_UNTRACKED_PATTERN='^\?\? \.humanize[-/]'
+            GIT_STATUS_FOR_BLOCK=$(echo "$GIT_STATUS_CACHED" | grep -vE "$HUMANIZE_UNTRACKED_PATTERN" || true)
+            if [[ -n "$GIT_STATUS_FOR_BLOCK" ]]; then
+                cleanup_stale_index_lock
+                FALLBACK="# Git Not Clean
+
+Methodology analysis is complete, but the working tree still has uncommitted changes:
+
+{{GIT_ISSUES}}
+
+Please commit all changes before allowing the loop to exit.
+{{SPECIAL_NOTES}}"
+                REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/git-not-clean.md" "$FALLBACK" \
+                    "GIT_ISSUES=uncommitted changes after methodology analysis" \
+                    "SPECIAL_NOTES=")
+
+                jq -n \
+                    --arg reason "$REASON" \
+                    --arg msg "Loop: Blocked - uncommitted changes detected after methodology analysis, please commit first" \
+                    '{
+                        "decision": "block",
+                        "reason": $reason,
+                        "systemMessage": $msg
+                    }'
+                exit 0
+            fi
+        fi
+        # Analysis complete and tree clean, allow exit
         exit 0
     else
         # Analysis not yet complete, block
