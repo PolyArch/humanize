@@ -174,6 +174,10 @@ LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LOOP_COMMON_PLUGIN_ROOT="$(cd "$LOOP_COMMON_DIR/../.." && pwd)"
 export PLUGIN_ROOT="${PLUGIN_ROOT:-$LOOP_COMMON_PLUGIN_ROOT}"
 
+# Shared project-root resolver (CLAUDE_PROJECT_DIR -> git toplevel,
+# realpath-canonicalized). Must load before any caller needs PROJECT_ROOT.
+source "$LOOP_COMMON_DIR/project-root.sh"
+
 _lc_errexit=false; [[ -o errexit ]] && _lc_errexit=true
 _lc_nounset=false; [[ -o nounset ]] && _lc_nounset=true
 _lc_pipefail=false; [[ -o pipefail ]] && _lc_pipefail=true
@@ -183,11 +187,20 @@ $_lc_nounset && set -u || set +u
 $_lc_pipefail && set -o pipefail || set +o pipefail
 unset _lc_errexit _lc_nounset _lc_pipefail
 
-_LOOP_COMMON_PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+_LOOP_COMMON_PROJECT_ROOT="$(resolve_project_root 2>/dev/null || true)"
 # Config loading is best-effort: use || true so a config-load failure does not
 # abort sourcing before callers' dependency checks (jq, codex) are reached.
 # Stderr is NOT suppressed so malformed config warnings remain visible.
-_LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT")" || true
+#
+# Skip config loading when no project root is available (e.g. humanize.sh is
+# sourced from .bashrc/.zshrc in a non-repo directory like $HOME). Passing an
+# empty project_root to load_merged_config would surface a usage error on
+# stderr every time the shell starts.
+if [[ -n "$_LOOP_COMMON_PROJECT_ROOT" ]]; then
+    _LOOP_COMMON_CONFIG="$(load_merged_config "$LOOP_COMMON_PLUGIN_ROOT" "$_LOOP_COMMON_PROJECT_ROOT")" || true
+else
+    _LOOP_COMMON_CONFIG=""
+fi
 
 # Load bitlesson model from merged config (controls which CLI bitlesson-select.sh uses)
 DEFAULT_BITLESSON_MODEL="$(get_config_value "$_LOOP_COMMON_CONFIG" "bitlesson_model" 2>/dev/null || true)"
@@ -254,6 +267,12 @@ extract_session_id() {
     printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || echo ""
 }
 
+# Background-task helpers (expand_leading_tilde, extract_transcript_path,
+# derive_loop_start_iso_ts, list/has/count_pending_background_task[_ids],
+# handle_bg_task_short_circuit) live in loop-bg-tasks.sh and are sourced
+# at the bottom of this file so every existing consumer of loop-common.sh
+# continues to get them transparently.
+
 # Resolve the active state file for a loop directory
 # Checks for finalize-state.md first, then state.md
 # Usage: resolve_active_state_file "$loop_dir"
@@ -315,10 +334,17 @@ resolve_any_state_file() {
 # Empty stored session_id matches any filter (backward compat for pre-session
 # state files).
 #
+# Third parameter `allow_bg_marker_fallback` (default "false"): when "true",
+# the session-filter branch also considers a mismatched-session dir that holds
+# a `bg-pending.marker` file AND an active state file. Only the RLCR stop
+# hook opts in to this; every other caller (read/write/bash/plan-file
+# validators, ...) keeps strict session isolation.
+#
 # Outputs the directory path to stdout, or empty string if none found
 find_active_loop() {
     local loop_base_dir="$1"
     local filter_session_id="${2:-}"
+    local allow_bg_marker_fallback="${3:-false}"
 
     if [[ ! -d "$loop_base_dir" ]]; then
         echo ""
@@ -342,9 +368,18 @@ find_active_loop() {
         return
     fi
 
-    # Session filter: iterate newest-to-oldest, find the first dir belonging
-    # to this session (any state file), then check if it is still active.
+    # Session filter: iterate newest-to-oldest.
+    #
+    # The caller's own (exact stored session_id) match takes precedence over
+    # any marker-based adoption: with multiple active RLCR loops in the same
+    # repo, a newer dir parked by a different session must not be returned
+    # before an older dir that actually belongs to the caller. Marker
+    # candidates are recorded during the scan and only used as a fallback
+    # when no exact match is found anywhere. Zombie-loop protection
+    # (terminal newest for this session returns empty) still wins over
+    # marker fallback.
     local dir
+    local marker_candidate=""
     while IFS= read -r dir; do
         [[ -z "$dir" ]] && continue
         local trimmed_dir="${dir%/}"
@@ -358,9 +393,9 @@ find_active_loop() {
         local stored_session_id
         stored_session_id=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/'"${FIELD_SESSION_ID}"': *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
 
-        # Empty stored session_id matches any session (backward compat)
+        # Empty stored session_id matches any session (backward compat).
         if [[ -z "$stored_session_id" ]] || [[ "$stored_session_id" == "$filter_session_id" ]]; then
-            # This is the newest dir for this session -- only return if active
+            # Newest dir for this session -- only return if active.
             local active_state
             active_state=$(resolve_active_state_file "$trimmed_dir")
             if [[ -n "$active_state" ]]; then
@@ -368,14 +403,38 @@ find_active_loop() {
                 return
             fi
             # Session's newest loop is in terminal state; do not fall through
+            # to marker-based adoption either.
             echo ""
             return
         fi
+
+        # Session mismatch. Only the stop hook opts in to marker-based
+        # adoption; validators and other callers keep strict isolation, so
+        # the candidate is only recorded when the caller explicitly allows
+        # it.
+        if [[ "$allow_bg_marker_fallback" == "true" ]] \
+           && [[ -z "$marker_candidate" ]] \
+           && [[ -f "$trimmed_dir/bg-pending.marker" ]]; then
+            local candidate_state
+            candidate_state=$(resolve_active_state_file "$trimmed_dir")
+            if [[ -n "$candidate_state" ]]; then
+                marker_candidate="$trimmed_dir"
+            fi
+            # Marker on a terminal loop is stale; leave it alone.
+        fi
     done < <(ls -1d "$loop_base_dir"/*/ 2>/dev/null | sort -r)
+
+    # No exact session match. Fall back to marker-based adoption only when
+    # the caller explicitly opted in -- the stop hook uses this to surface
+    # a "parked by another session" notice or to resume its own parked
+    # loop after a previous session died before the bg completion arrived.
+    if [[ "$allow_bg_marker_fallback" == "true" ]] && [[ -n "$marker_candidate" ]]; then
+        echo "$marker_candidate"
+        return
+    fi
 
     echo ""
 }
-
 
 # Extract current round number from state.md
 # Outputs the round number to stdout, defaults to 0
@@ -1042,10 +1101,20 @@ is_cancel_authorized() {
         return 4
     fi
 
+    # Canonicalize the loop dir (idempotent: resolve_project_root already
+    # canonicalizes, but callers may supply a non-canonical override). Both
+    # sides of the upcoming string comparisons must be canonicalized through
+    # the same transformation or a symlinked prefix in the user's command
+    # (e.g. /var/... vs /private/var/... on macOS) will spuriously fail the
+    # authorization check.
+    local canonical_loop_dir
+    canonical_loop_dir="$(canonicalize_path "${active_loop_dir%/}")"
+    canonical_loop_dir="${canonical_loop_dir:-${active_loop_dir%/}}"
+
     # Normalize: Replace $loop_dir and ${loop_dir} with actual path
     local normalized="$command_lower"
     local loop_dir_lower
-    loop_dir_lower="${active_loop_dir%/}/"
+    loop_dir_lower="${canonical_loop_dir}/"
     loop_dir_lower=$(echo "$loop_dir_lower" | tr '[:upper:]' '[:lower:]')
 
     normalized="${normalized//\$\{loop_dir\}/$loop_dir_lower}"
@@ -1141,32 +1210,59 @@ is_cancel_authorized() {
         return 5
     fi
 
-    # Normalize and validate source path
+    # Normalize and validate source path.
+    #
+    # Use canonicalize_path_prefix (NOT canonicalize_path): we need to resolve
+    # symlinks in the parent directory so a symlinked project prefix matches
+    # canonical_loop_dir, but we MUST NOT dereference a symlink at the leaf.
+    # Otherwise a symlink like /tmp/alias -> <loop>/state.md would canonicalize
+    # to <loop>/state.md and pass the check, but `mv` would then operate on
+    # the link path itself, escaping the loop directory and/or corrupting
+    # loop state. The on-disk symlink rejection below (src_original check)
+    # still fires because it probes the real state.md under canonical_loop_dir.
+    #
+    # Re-lowercase after canonicalization because realpath on case-insensitive
+    # filesystems may restore the original casing of path components, which
+    # would diverge from the already-lowercased expected_* values.
     src=$(_normalize_path "$src")
+    local src_canonical
+    src_canonical="$(canonicalize_path_prefix "$src")"
+    src_canonical="${src_canonical:-$src}"
+    src_canonical=$(echo "$src_canonical" | tr '[:upper:]' '[:lower:]')
     local expected_src_state="${loop_dir_lower}state.md"
     local expected_src_finalize="${loop_dir_lower}finalize-state.md"
     local expected_src_methodology="${loop_dir_lower}methodology-analysis-state.md"
-    if [[ "$src" != "$expected_src_state" ]] && [[ "$src" != "$expected_src_finalize" ]] && [[ "$src" != "$expected_src_methodology" ]]; then
+    if [[ "$src_canonical" != "$expected_src_state" ]] && [[ "$src_canonical" != "$expected_src_finalize" ]] && [[ "$src_canonical" != "$expected_src_methodology" ]]; then
         return 5
     fi
 
-    # Normalize and validate destination path
+    # Normalize and validate destination path. Uses canonicalize_path_prefix
+    # for the same reason as src: a symlink alias pointing at the real
+    # cancel-state.md must NOT pass authorization, because `mv` onto a
+    # symlink replaces the link rather than creating <loop>/cancel-state.md,
+    # corrupting loop state and moving state.md outside the loop dir.
     dest=$(_normalize_path "$dest")
+    local dest_canonical
+    dest_canonical="$(canonicalize_path_prefix "$dest")"
+    dest_canonical="${dest_canonical:-$dest}"
+    dest_canonical=$(echo "$dest_canonical" | tr '[:upper:]' '[:lower:]')
     local expected_dest="${loop_dir_lower}cancel-state.md"
-    if [[ "$dest" != "$expected_dest" ]]; then
+    if [[ "$dest_canonical" != "$expected_dest" ]]; then
         return 5
     fi
 
     # SECURITY: Reject if source file is a symlink (filesystem check)
     # Determine source file by comparing against expected paths (not substring match)
     # This avoids vulnerability when loop directory path contains "finalize" or "methodology"
+    # Use canonical_loop_dir so the symlink check runs against the real on-disk
+    # path rather than a user-supplied non-canonical form.
     local src_original
-    if [[ "$src" == "$expected_src_methodology" ]]; then
-        src_original="${active_loop_dir}/methodology-analysis-state.md"
-    elif [[ "$src" == "$expected_src_finalize" ]]; then
-        src_original="${active_loop_dir}/finalize-state.md"
+    if [[ "$src_canonical" == "$expected_src_methodology" ]]; then
+        src_original="${canonical_loop_dir}/methodology-analysis-state.md"
+    elif [[ "$src_canonical" == "$expected_src_finalize" ]]; then
+        src_original="${canonical_loop_dir}/finalize-state.md"
     else
-        src_original="${active_loop_dir}/state.md"
+        src_original="${canonical_loop_dir}/state.md"
     fi
     if [[ -L "$src_original" ]]; then
         return 6  # Source is a symlink
@@ -1243,7 +1339,7 @@ git_adds_humanize() {
         # Check for direct .humanize reference (blocked regardless of other flags)
         # Handles: .humanize, ./.humanize, path/to/.humanize, ".humanize", '.humanize'
         # Pattern matches .humanize at start, after space, after / or ./ AND followed by end, /, or space
-        # This avoids over-blocking .humanizeconfig or .humanize-backup
+        # This avoids over-blocking .humanizeconfig or .humanize-backup.
         if echo "$add_args_normalized" | grep -qE '(^|[[:space:]]|/)\.humanize($|/|[[:space:]])'; then
             return 0
         fi
@@ -1339,6 +1435,56 @@ If you need to add \`.humanize*\` to \`.gitignore\`, follow these steps:
 IMPORTANT: The commit message must NOT contain the literal string \".humanize\" to avoid triggering this protection."
 
     load_and_render_safe "$TEMPLATE_DIR" "block/git-add-humanize.md" "$fallback"
+}
+
+# Return success if local Humanize runtime state has entered git tracking or the index.
+# Untracked .humanize state is allowed; tracked or staged state must be blocked.
+# Usage: git_has_tracked_humanize_state [project_root]
+#
+# Intentionally scoped to .humanize/ to stay consistent with git_adds_humanize,
+# which explicitly allows unrelated paths like .humanize-backup or
+# .humanizeconfig (see tests/test-humanize-escape.sh). ls-files covers both
+# committed entries and paths staged via git add; paths the user has staged for
+# removal via git rm --cached are correctly omitted so the user can unstick
+# themselves without being re-blocked.
+git_has_tracked_humanize_state() {
+    local project_root="${1:-.}"
+
+    if [[ ! -d "$project_root/.git" ]] && ! git -C "$project_root" rev-parse --git-dir >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if git -C "$project_root" ls-files -- .humanize 2>/dev/null | grep -q '.'; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Standard message for blocking tracked/staged .humanize state.
+# Usage: git_tracked_humanize_blocked_message
+git_tracked_humanize_blocked_message() {
+    local fallback="# Tracked Humanize State Blocked
+
+Detected tracked or staged files under \`.humanize/\`.
+
+These files are local Humanize loop state and must remain outside version control.
+
+## Required Fix
+
+1. Remove Humanize state from the index:
+
+       git rm --cached -r .humanize
+
+2. Keep only real project files staged.
+3. Retry the stop action after the local state is no longer tracked.
+
+## Important
+
+- Do NOT use \`git add -f\` on Humanize state files.
+- Do NOT commit RLCR trackers, round summaries, contracts, or cancel/finalize markers."
+
+    load_and_render_safe "$TEMPLATE_DIR" "block/git-tracked-humanize.md" "$fallback"
 }
 
 # Standard message for blocking direct execution of hook scripts
@@ -1440,3 +1586,15 @@ end_loop() {
         return 1
     fi
 }
+
+# Source background-task helpers. Sourced at the bottom so every function
+# above is available to callers that only need loop-common.sh, while bg-aware
+# callers (the stop hook, the test suite) still get the bg helpers via a
+# single source of loop-common.sh.
+#
+# _LOOP_COMMON_DIR is set here instead of at the top of the file because
+# loop-bg-tasks.sh lives in the same directory as this file and we want to
+# locate it regardless of how loop-common.sh was sourced.
+_LOOP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=loop-bg-tasks.sh
+source "$_LOOP_COMMON_DIR/loop-bg-tasks.sh"

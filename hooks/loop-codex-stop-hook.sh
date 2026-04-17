@@ -39,12 +39,12 @@ HOOK_INPUT=$(cat)
 # Find Active Loop
 # ========================================
 
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
-
 # Source shared loop functions and template loader
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "$SCRIPT_DIR/lib/loop-common.sh"
+
+PROJECT_ROOT="$(resolve_project_root)" || exit 0
+LOOP_BASE_DIR="$PROJECT_ROOT/.humanize/rlcr"
 
 # Source portable timeout wrapper for git operations
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -61,12 +61,26 @@ GIT_TIMEOUT=30
 # Extract session_id from hook input for session-aware loop filtering
 HOOK_SESSION_ID=$(extract_session_id "$HOOK_INPUT")
 
-LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID")
+LOOP_DIR=$(find_active_loop "$LOOP_BASE_DIR" "$HOOK_SESSION_ID" true)
 
 # If no active loop (or session_id mismatch), allow exit
 if [[ -z "$LOOP_DIR" ]]; then
     exit 0
 fi
+
+# ========================================
+# Background-Task Guards
+# ========================================
+# Delegates to handle_bg_task_short_circuit (hooks/lib/loop-bg-tasks.sh),
+# which runs four cohesive guards in order:
+#   1. Ambiguous-caller marker guard (no session_id + marker present)
+#   2. Cross-session parked-loop guard (foreign session walking in)
+#   3. Pending-bg short-circuit (this session has async work in flight)
+#   4. Same-session stale-marker cleanup (bg work just finished)
+# When any guard short-circuits, it emits the appropriate JSON on stdout
+# and `exit 0`s directly; we never return from that call. When no guard
+# fires we continue into the normal gate logic below.
+handle_bg_task_short_circuit "$LOOP_DIR" "$HOOK_INPUT" "$HOOK_SESSION_ID"
 
 # ========================================
 # Detect Loop Phase: Normal or Finalize
@@ -621,6 +635,21 @@ fi
 if [[ "$GIT_IS_REPO" == "true" ]]; then
     GIT_ISSUES=""
     SPECIAL_NOTES=""
+
+    if git_has_tracked_humanize_state "$PROJECT_ROOT"; then
+        cleanup_stale_index_lock
+        REASON=$(git_tracked_humanize_blocked_message)
+
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Blocked - tracked Humanize state detected, remove it from git first" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
 
     # Check for uncommitted changes (staged or unstaged) using cached status.
     # Exclude untracked .humanize/ paths and .humanize-* dash-separated legacy

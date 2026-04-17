@@ -68,6 +68,7 @@ TEST_SUITES=(
     "test-templates-comprehensive.sh"
     "test-plan-file-hooks.sh"
     "test-stop-hook-legacy-compat.sh"
+    "test-stop-hook-bg-allow.sh"
     "test-error-scenarios.sh"
     "test-ansi-parsing.sh"
     "test-allowlist-validators.sh"

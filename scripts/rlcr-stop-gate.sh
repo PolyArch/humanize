@@ -18,7 +18,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HUMANIZE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+# Deterministic project-root resolver (CLAUDE_PROJECT_DIR -> git toplevel, no pwd fallback).
+# Overridable via --project-root for non-hook callers; the flag handler below
+# always wins because it runs after this default assignment.
+source "$HUMANIZE_ROOT/hooks/lib/project-root.sh"
+PROJECT_ROOT="$(resolve_project_root 2>/dev/null || true)"
 HOOK_SCRIPT="$HUMANIZE_ROOT/hooks/loop-codex-stop-hook.sh"
 
 SESSION_ID="${CLAUDE_SESSION_ID:-}"
@@ -34,9 +39,9 @@ Usage: rlcr-stop-gate.sh [options]
 Options:
   --session-id ID         Session ID forwarded to hook input
   --transcript-path PATH  Transcript path forwarded to hook input
-  --project-root PATH     Project root override. Default: caller's git
-                          worktree root (git rev-parse --show-toplevel),
-                          or caller's cwd when not inside a git worktree.
+  --project-root PATH     Project root override. Default: CLAUDE_PROJECT_DIR,
+                          otherwise caller's git worktree root.
+                          Without either, the gate allows the stop.
   --json                  Print raw hook JSON on block
   -h, --help              Show this help
 EOF
@@ -75,6 +80,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$PROJECT_ROOT" ]]; then
+    # No humanize project context reachable from here -- nothing to enforce.
+    # Allow the stop to proceed instead of returning a wrapper error so that
+    # invoking the gate outside any project (or any git repo) is benign.
+    echo "ALLOW: no humanize project root resolved."
+    exit 0
+fi
+
 if [[ ! -x "$HOOK_SCRIPT" ]]; then
     echo "Error: Hook script not found or not executable: $HOOK_SCRIPT" >&2
     exit 20
@@ -85,9 +98,15 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 20
 fi
 
-# Build hook input JSON while omitting empty fields.
-# Include standard Stop hook fields so the underlying hook sees the same schema
-# as a real Claude Code Stop event (hook_event_name, stop_hook_active, cwd).
+# Build hook input JSON. Include standard Stop hook fields so the underlying
+# hook sees the same schema as a real Claude Code Stop event
+# (hook_event_name, stop_hook_active, cwd).
+#
+# Empty session_id / transcript_path become explicit null instead of being
+# filtered out; a `select(length > 0)` used as a plain object value collapses
+# the entire enclosing object to empty whenever any selected field is empty,
+# which would hide forwarded fields like transcript_path when only session_id
+# is missing.
 HOOK_INPUT=$(jq -n \
     --arg session_id "$SESSION_ID" \
     --arg transcript_path "$TRANSCRIPT_PATH" \
@@ -101,8 +120,8 @@ HOOK_INPUT=$(jq -n \
         model: $model,
         permission_mode: $permission_mode,
         last_assistant_message: null,
-        session_id: ($session_id | select(length > 0)),
-        transcript_path: ($transcript_path | select(length > 0))
+        session_id: (if ($session_id | length) > 0 then $session_id else null end),
+        transcript_path: (if ($transcript_path | length) > 0 then $transcript_path else null end)
     }')
 
 # Capture hook exit code explicitly to map non-zero to exit 20 (wrapper error)
@@ -140,6 +159,20 @@ if [[ "$DECISION" == "block" ]]; then
         [[ -n "$REASON" ]] && printf '%s\n' "$REASON"
     fi
     exit 10
+fi
+
+# No decision field in the JSON: per Claude Code Stop-hook spec this means
+# allow the stop. Surface any systemMessage so callers see the reason
+# (e.g. "background task(s) still running"), then exit 0.
+if [[ -z "$DECISION" ]]; then
+    if [[ "$PRINT_JSON" == "true" ]]; then
+        printf '%s\n' "$HOOK_OUTPUT"
+    elif [[ -n "$SYSTEM_MESSAGE" ]]; then
+        printf 'ALLOW: %s\n' "$SYSTEM_MESSAGE"
+    else
+        echo "ALLOW: stop gate passed."
+    fi
+    exit 0
 fi
 
 echo "Error: Unexpected hook decision: ${DECISION:-<empty>}" >&2

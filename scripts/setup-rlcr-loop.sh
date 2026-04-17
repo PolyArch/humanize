@@ -345,9 +345,13 @@ done
 # Validate Prerequisites
 # ========================================
 
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+PROJECT_ROOT="$(resolve_project_root)" || {
+    echo "Error: Cannot determine humanize project root." >&2
+    echo "  Set CLAUDE_PROJECT_DIR or run inside a git repository." >&2
+    exit 1
+}
+
 CALLER_CWD="$(pwd -P 2>/dev/null || pwd)"
-PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_ROOT")"
 
 # Plan paths resolve from the caller cwd when that cwd is inside the project.
 # If the script is launched from outside the project with CLAUDE_PROJECT_DIR
