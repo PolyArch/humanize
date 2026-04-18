@@ -781,7 +781,19 @@ _FORBIDDEN_CATEGORIES = [
     ('branch_name', _re.compile(r'\b(?:feat|fix|hotfix|release|bugfix)/\w+')),
     ('branch_name', _re.compile(r'\bmain|master|develop\b')),
     ('code_definition', _re.compile(r'\bdef \w+|function \w+|class \w+')),
-    ('import_statement', _re.compile(r'\b(?:import|require|from)\s+\w+')),
+    # Code-shaped imports only. The previous `\b(?:import|require|from)
+    # \s+\w+` pattern matched ordinary English prose like
+    # "drifted from the original plan structure", which flagged the
+    # built-in `plan_execution` methodology observation and caused
+    # /api/sessions/<id>/github-issue to reject already-sanitized
+    # payloads with a false-positive warning. Anchor each variant to
+    # a context that only appears in code:
+    #   - Python `import x` / `import x.y` at line start
+    #   - Python `from x.y import z` at line start
+    #   - JS/Node `require("…")` call syntax
+    ('import_statement', _re.compile(r'^\s*import\s+[\w.]+', _re.MULTILINE)),
+    ('import_statement', _re.compile(r'^\s*from\s+[\w.]+\s+import\b', _re.MULTILINE)),
+    ('import_statement', _re.compile(r'\brequire\s*\(')),
     ('code_fence', _re.compile(r'```')),
     ('identifier', _re.compile(r'\b\w+_\w+_\w+\b')),
     ('identifier', _re.compile(r'\b[a-z]+[A-Z]\w+\b')),
