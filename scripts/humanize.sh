@@ -1208,15 +1208,17 @@ _humanize_monitor_web() {
     local auth_token=""
     local daemon=false
 
+    local trust_proxy=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --project) project_dir="$2"; shift 2 ;;
             --host)    host="$2"; shift 2 ;;
             --port)    port="$2"; shift 2 ;;
             --auth-token) auth_token="$2"; shift 2 ;;
+            --trust-proxy) trust_proxy=true; shift ;;
             --daemon)  daemon=true; shift ;;
             -h|--help)
-                echo "Usage: humanize monitor web [--project <path>] [--host <addr>] [--port <int>] [--auth-token <tok>] [--daemon]"
+                echo "Usage: humanize monitor web [--project <path>] [--host <addr>] [--port <int>] [--auth-token <tok>] [--trust-proxy] [--daemon]"
                 return 0
                 ;;
             *)
@@ -1254,6 +1256,7 @@ _humanize_monitor_web() {
         local -a daemon_args=(--project "$project_dir" --host "$host")
         [[ -n "$port" ]] && daemon_args+=(--port "$port")
         [[ -n "$auth_token" ]] && daemon_args+=(--auth-token "$auth_token")
+        [[ "$trust_proxy" == "true" ]] && daemon_args+=(--trust-proxy)
         bash "$viz_start" "${daemon_args[@]}"
         return $?
     fi
@@ -1331,6 +1334,7 @@ _humanize_monitor_web() {
         --static "$static_dir"
     )
     [[ -n "$auth_token" ]] && fg_args+=(--auth-token "$auth_token")
+    [[ "$trust_proxy" == "true" ]] && fg_args+=(--trust-proxy)
 
     # Do NOT exec: `humanize` is a function sourced into the user's
     # interactive shell (see scripts/humanize.sh usage in README).

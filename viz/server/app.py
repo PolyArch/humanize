@@ -1350,6 +1350,14 @@ def main():
                         help='Bearer token required for remote-mode access. '
                              'May also be supplied via HUMANIZE_VIZ_TOKEN env var. '
                              'Required when --host is not a loopback address.')
+    parser.add_argument('--trust-proxy', action='store_true', default=False,
+                        help='Acknowledge that a TLS-terminating reverse proxy '
+                             'is in front of this server. Required for '
+                             'non-loopback binds because the SSE stream '
+                             'transmits the bearer token as a ?token= query '
+                             'parameter, which would leak in cleartext over '
+                             'plain HTTP. May also be enabled via the '
+                             'HUMANIZE_VIZ_TRUST_PROXY=1 env var.')
     args = parser.parse_args()
 
     global PROJECT_DIR, STATIC_DIR, BIND_HOST, AUTH_TOKEN, _watcher
@@ -1363,6 +1371,28 @@ def main():
             "Error: binding to a non-localhost host requires --auth-token "
             "(or HUMANIZE_VIZ_TOKEN env var). Refusing to start a remote "
             "server without authentication.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Plain-HTTP Flask + ?token= bearer auth is safe on loopback
+    # (nothing ever leaves the host), but leaks the token in
+    # cleartext the moment the bind is externally reachable. Require
+    # an explicit operator acknowledgement that a TLS-terminating
+    # reverse proxy is in front of the server before accepting a
+    # non-loopback bind. The flag / env var is a load-bearing
+    # declaration: without it we'd rather refuse to start than hand
+    # out an insecure dashboard URL.
+    trust_proxy = args.trust_proxy or os.environ.get(
+        'HUMANIZE_VIZ_TRUST_PROXY', ''
+    ).strip() in ('1', 'true', 'yes')
+    if not _is_localhost_bind() and not trust_proxy:
+        print(
+            "Error: binding to a non-localhost host requires a TLS-terminating\n"
+            "reverse proxy so the ?token= query parameter is never transmitted\n"
+            "in cleartext. Pass --trust-proxy (or HUMANIZE_VIZ_TRUST_PROXY=1)\n"
+            "to acknowledge that an HTTPS reverse proxy (nginx / caddy / etc.)\n"
+            "is in front of this server.",
             file=sys.stderr,
         )
         sys.exit(2)

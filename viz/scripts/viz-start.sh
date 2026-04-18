@@ -27,6 +27,7 @@ PROJECT_DIR="."
 HOST="127.0.0.1"
 PORT=""
 AUTH_TOKEN=""
+TRUST_PROXY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
         --host)    HOST="$2"; shift 2 ;;
         --port)    PORT="$2"; shift 2 ;;
         --auth-token) AUTH_TOKEN="$2"; shift 2 ;;
+        --trust-proxy) TRUST_PROXY=true; shift ;;
         -h|--help)
             sed -n '2,/^set -euo/p' "$0" | head -n -1
             exit 0
@@ -199,6 +201,9 @@ PY_ARGS=(
 )
 if [[ -n "$AUTH_TOKEN" ]]; then
     PY_ARGS+=(--auth-token "$AUTH_TOKEN")
+fi
+if [[ "$TRUST_PROXY" == "true" ]]; then
+    PY_ARGS+=(--trust-proxy)
 fi
 
 # Launch in the per-project tmux session.
