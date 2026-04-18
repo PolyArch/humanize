@@ -82,22 +82,37 @@ def _get_rlcr_dir():
     return os.path.join(PROJECT_DIR, '.humanize', 'rlcr')
 
 
-# Session ids on disk are produced exclusively by setup-rlcr-loop.sh
-# via `date +%Y-%m-%d_%H-%M-%S`, so every legitimate id matches the
-# tight regex below. Rejecting anything outside this alphabet stops
-# hostile disk state (a session directory created by hand with
-# quotes or angle brackets in its name) from flowing into the
-# frontend's inline `onclick="navigate('#/session/${s.id}')"`
-# template literals. The frontend still uses HTML-escape for DOM
-# attributes, but the inline-handler template is an uncaught
-# surface — making the id shape dependable here is the cheapest
-# defense-in-depth.
-_SESSION_ID_RE = re.compile(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$')
+# Session ids flow into the frontend's inline onclick template
+# literals:
+#   onclick="navigate('#/session/${s.id}')"
+#   onclick="opsPreviewIssue('${s.id}')"
+# so any id containing a JS-string metacharacter (quote, backtick,
+# backslash, angle bracket, newline, etc.) would let hostile disk
+# state break out of the surrounding string and inject script.
+# setup-rlcr-loop.sh generates ids that match
+# `YYYY-MM-DD_HH-MM-SS`, but some test fixtures and legacy
+# recoveries use simpler slugs like `2026-04-17_CL`. Accept the
+# full superset of safe characters (ASCII letters, digits,
+# underscore, dash, period — with extra rules rejecting `..`,
+# leading-dot, and path separators) so those still work while
+# every character outside that set is refused up-front.
+_SESSION_ID_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
 
 
 def _is_safe_session_id(session_id):
-    """Return True iff ``session_id`` matches the generator's format."""
-    return bool(session_id) and bool(_SESSION_ID_RE.match(session_id))
+    """Return True iff ``session_id`` only uses the safe alphabet.
+
+    Rejects anything with path separators, parent-traversal
+    markers, leading dots, or characters that could escape a JS
+    string literal in the frontend's inline onclick handlers.
+    """
+    if not session_id or len(session_id) > 128:
+        return False
+    if session_id in ('.', '..') or session_id.startswith('.'):
+        return False
+    if '/' in session_id or '\\' in session_id:
+        return False
+    return bool(_SESSION_ID_RE.match(session_id))
 
 
 def _get_session_dir(session_id):
