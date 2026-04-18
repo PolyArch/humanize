@@ -1376,6 +1376,23 @@ def websocket(ws):
             pass
         return
 
+    # Cross-origin WebSocket rejection. The HTTP side of the app
+    # gates mutating routes through `_enforce_csrf_protection`, but
+    # browsers happily let arbitrary pages open a WebSocket to
+    # ws://localhost:<port>/ws with no Origin check from the server.
+    # A `cancel_session` message over that connection would kill an
+    # active loop with zero auth prompt. Reuse the same request-host
+    # matcher so the localhost dashboard's own Origin keeps working
+    # while hostile origins (pages served by other projects in the
+    # same browser) are closed before they can send anything.
+    origin = request.headers.get('Origin', '').strip()
+    if origin and not _origin_matches_request(origin):
+        try:
+            ws.close(reason='cross-origin WebSocket rejected')
+        except Exception:
+            pass
+        return
+
     with _ws_lock:
         _ws_clients.add(ws)
     try:
