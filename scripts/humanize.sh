@@ -1332,7 +1332,14 @@ _humanize_monitor_web() {
     )
     [[ -n "$auth_token" ]] && fg_args+=(--auth-token "$auth_token")
 
-    exec "$venv_dir/bin/python" "$app_entry" "${fg_args[@]}"
+    # Do NOT exec: `humanize` is a function sourced into the user's
+    # interactive shell (see scripts/humanize.sh usage in README).
+    # `exec` would replace that shell process with Python, so
+    # pressing Ctrl+C (or any server exit) would kill the whole
+    # interactive session. Running the command as a child process
+    # instead lets the function return normally on server exit and
+    # keeps the shell prompt alive.
+    "$venv_dir/bin/python" "$app_entry" "${fg_args[@]}"
 }
 
 
