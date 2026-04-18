@@ -694,16 +694,26 @@ function _mountLiveLogPane(sessionId, logEntry) {
 
     const _utf8Decoder = new TextDecoder('utf-8', { fatal: false })
     let bytesSeen = 0
-    function appendBytes(b64) {
+    function appendBytes(b64, { flush = false } = {}) {
         try {
             // atob returns a Latin-1 byte-string; convert to a real
             // byte array and decode as UTF-8 so non-ASCII log output
             // (CJK text, emoji, smart quotes) renders correctly
             // instead of as mojibake.
+            //
+            // `{ stream: true }` keeps the decoder's internal buffer
+            // alive across calls, so a multibyte UTF-8 sequence
+            // split at the 64 KiB SSE chunk boundary is reassembled
+            // on the next event instead of being emitted as U+FFFD
+            // replacement characters. Callers pass `flush: true`
+            // when the stream is known to be complete (resync
+            // reason=truncated/rotated/recreated/overflow, eof) so
+            // the decoder's trailing buffer is finalised and not
+            // accidentally prefixed to the next snapshot.
             const binStr = atob(b64)
             const bytes = new Uint8Array(binStr.length)
             for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i)
-            const text = _utf8Decoder.decode(bytes)
+            const text = _utf8Decoder.decode(bytes, { stream: !flush })
             pane.textContent += text
             bytesSeen += bytes.length
             // Cap pane size to avoid runaway memory on long sessions.
@@ -745,6 +755,11 @@ function _mountLiveLogPane(sessionId, logEntry) {
             setStatus(`resync: ${data.reason}`, 'warn')
             if (data.reason === 'truncated' || data.reason === 'rotated' ||
                 data.reason === 'recreated' || data.reason === 'overflow') {
+                // Stream is discontinuous from here: finalise the
+                // decoder so any trailing buffered bytes from the
+                // previous file don't bleed into the fresh content
+                // that follows.
+                try { _utf8Decoder.decode(new Uint8Array(0)) } catch (_) {}
                 pane.textContent = ''
                 bytesSeen = 0
             }
@@ -755,6 +770,10 @@ function _mountLiveLogPane(sessionId, logEntry) {
         setStatus('eof', 'eof')
         es.close()
         _liveLogPanes.delete(sessionId)
+        // Flush the decoder so a trailing incomplete multibyte
+        // sequence (if any) is rendered as U+FFFD rather than
+        // silently dropped.
+        try { _utf8Decoder.decode(new Uint8Array(0)) } catch (_) {}
         // The session just transitioned to a terminal status. The
         // sidebar/pipeline are snapshots and will show the new status
         // when the user navigates away and back or reloads; no
