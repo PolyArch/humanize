@@ -88,9 +88,25 @@ function selectLang(content) {
     return null
 }
 
-// Safe Markdown rendering — parse then sanitize to prevent XSS
+// Safe Markdown rendering — parse then sanitize to prevent XSS.
+// Fails closed to plain-text escape when the DOMPurify CDN dep isn't
+// loaded (offline, blocked by firewall, or a CSP that forbids
+// unpkg.com). The earlier implementation returned the raw
+// marked.parse() output in that case, which re-opens the XSS
+// surface the sanitizer was supposed to close — plan files, round
+// summaries, review results, methodology reports, and the Preview
+// Issue modal all feed markdown into the DOM through this helper.
 function safeMd(text) {
     if (!text) return ''
+    if (typeof DOMPurify === 'undefined' || typeof marked === 'undefined') {
+        // Fall back to escaped plain text so a missing CDN dep is a
+        // visible degradation (monospace text) rather than a silent
+        // XSS foot-gun. Mirrors the _esc() round-trip that every
+        // attribute-level escape in app.js / pipeline.js uses.
+        const d = document.createElement('div')
+        d.textContent = String(text)
+        return `<pre style="white-space:pre-wrap;word-break:break-word;margin:0">${d.innerHTML}</pre>`
+    }
     const html = marked.parse(text)
-    return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html
+    return DOMPurify.sanitize(html)
 }
