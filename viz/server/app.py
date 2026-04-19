@@ -1231,7 +1231,15 @@ _SSE_HEARTBEAT_INTERVAL_SECONDS = 15.0
 # correctness rationale (Codex Round 2 review caught a reconnect bug
 # where per-request LogStream construction lost retained history).
 _log_stream_registry = log_streamer.LogStreamRegistry()
+# Ref-counted registry of per-cache-directory log watchers. Each live
+# SSE generator calls _acquire_cache_watcher on entry and the matching
+# _release_cache_watcher in its finally block, so the observer (and
+# its inotify handle) is torn down on the last client disconnect. The
+# pre-fix implementation only started watchers and never stopped them,
+# so long-running dashboard processes leaked one watcher thread per
+# unique cache directory the user ever browsed.
 _cache_watchers = {}
+_cache_watcher_refcounts = {}
 _cache_watchers_lock = threading.Lock()
 
 
@@ -1293,17 +1301,24 @@ def _session_is_terminal_cheap(session_id):
     return False
 
 
-def _ensure_cache_watcher(cache_dir):
-    """Start at most one CacheLogWatcher per cache directory.
+def _acquire_cache_watcher(cache_dir):
+    """Reserve a cache watcher for one active SSE stream.
 
-    The watcher's callback runs the matching LogStream's poll inline
-    so file-system events drive the stream in addition to the SSE
-    handler's own 250 ms poll loop. Best-effort: if the cache
-    directory does not exist yet (startup race), the watcher does
-    not start and the SSE handler continues to drive everything via
-    its poll loop.
+    Starts at most one CacheLogWatcher per cache directory and
+    increments a per-directory refcount so concurrent SSE clients on
+    the same session share the observer. Paired with
+    :func:`_release_cache_watcher`, which stops the watcher when the
+    last client releases it. The watcher's callback runs the matching
+    LogStream's poll inline so file-system events drive the stream in
+    addition to the SSE handler's own 250 ms poll loop. Best-effort
+    on startup: if the cache directory does not exist yet the
+    watcher does not start and the SSE handler continues to drive
+    everything via its poll loop.
     """
     with _cache_watchers_lock:
+        _cache_watcher_refcounts[cache_dir] = (
+            _cache_watcher_refcounts.get(cache_dir, 0) + 1
+        )
         if cache_dir in _cache_watchers:
             return
 
@@ -1321,11 +1336,43 @@ def _ensure_cache_watcher(cache_dir):
             _cache_watchers[cache_dir] = watcher
 
 
+def _release_cache_watcher(cache_dir):
+    """Release one reservation; stop the watcher on the final release.
+
+    Called from the SSE generator's ``finally`` block so an observer
+    is torn down when its last client disconnects (normal EOF,
+    connection close, or server shutdown). Without this pairing the
+    observer thread and inotify handle outlive every session a user
+    ever browsed, which exhausts ``fs.inotify.max_user_watches`` on
+    long-running dashboard processes.
+    """
+    with _cache_watchers_lock:
+        remaining = _cache_watcher_refcounts.get(cache_dir, 0) - 1
+        if remaining <= 0:
+            _cache_watcher_refcounts.pop(cache_dir, None)
+            watcher = _cache_watchers.pop(cache_dir, None)
+        else:
+            _cache_watcher_refcounts[cache_dir] = remaining
+            watcher = None
+    if watcher is not None:
+        try:
+            watcher.stop()
+        except Exception:
+            # Best-effort cleanup: a failed observer stop must not
+            # take down the request that triggered the release.
+            pass
+
+
 def _get_or_create_log_stream(session_id, basename):
-    """Return the shared LogStream instance for ``(session_id, basename)``."""
+    """Return the shared LogStream instance for ``(session_id, basename)``.
+
+    The caller (the SSE route) is responsible for pairing
+    :func:`_acquire_cache_watcher` / :func:`_release_cache_watcher`
+    around the generator body so watcher lifetime tracks active
+    stream consumers rather than process lifetime.
+    """
     cache_dir = rlcr_sources.cache_dir_for_session(PROJECT_DIR, session_id)
     stream = _log_stream_registry.get_or_create(cache_dir, session_id, basename)
-    _ensure_cache_watcher(cache_dir)
     return stream
 
 
@@ -1349,6 +1396,12 @@ def stream_session_log(session_id, basename):
         abort(404)
 
     stream = _get_or_create_log_stream(session_id, basename)
+    # Resolve the cache directory once up-front so the generator's
+    # acquire/release pair (and any early error paths) can reference
+    # the same key. _get_or_create_log_stream resolves this internally
+    # but does not expose it; we re-derive via the same helper so the
+    # refcount key matches the watcher registry exactly.
+    cache_dir = rlcr_sources.cache_dir_for_session(PROJECT_DIR, session_id)
 
     last_event_id = 0
     raw_id = request.headers.get('Last-Event-Id')
@@ -1359,58 +1412,70 @@ def stream_session_log(session_id, basename):
             last_event_id = 0
 
     def generate():
-        client_last_id = last_event_id
+        # Reserve the per-cache-dir watcher for the lifetime of this
+        # stream. The paired release in the finally block below is
+        # what lets long-running dashboard instances stop leaking
+        # inotify handles (one per distinct session the user browses)
+        # after clients disconnect.
+        _acquire_cache_watcher(cache_dir)
+        try:
+            client_last_id = last_event_id
 
-        # Initial event delivery: replay if the client has a Last-Event-Id,
-        # else fresh snapshot. The route never falls through to a poll
-        # that would emit the file body as `append` from offset 0.
-        if client_last_id > 0:
-            replayed, in_window = stream.replay(client_last_id)
-            for event in replayed:
-                yield _sse_frame(event)
-                client_last_id = event['id']
-            if not in_window:
-                for event in stream.snapshot():
+            # Initial event delivery: replay if the client has a Last-Event-Id,
+            # else fresh snapshot. The route never falls through to a poll
+            # that would emit the file body as `append` from offset 0.
+            if client_last_id > 0:
+                replayed, in_window = stream.replay(client_last_id)
+                for event in replayed:
                     yield _sse_frame(event)
                     client_last_id = event['id']
-        else:
-            for event in stream.snapshot():
-                yield _sse_frame(event)
-                client_last_id = event['id']
-
-        # Steady-state loop. Drive poll() (may be a no-op if the cache
-        # watcher or another concurrent handler already polled), then
-        # forward any retained events newer than what this client has
-        # already sent. Using the deque as the source of truth means
-        # multiple concurrent SSE clients on the same stream all
-        # receive every event without racing on _offset.
-        last_heartbeat = time.time()
-        while True:
-            stream.poll()
-            catchup, in_window = stream.replay(client_last_id)
-            for event in catchup:
-                yield _sse_frame(event)
-                client_last_id = event['id']
-            if not in_window:
+                if not in_window:
+                    for event in stream.snapshot():
+                        yield _sse_frame(event)
+                        client_last_id = event['id']
+            else:
                 for event in stream.snapshot():
                     yield _sse_frame(event)
                     client_last_id = event['id']
 
-            # Cheap disk probe instead of a full parse_session on
-            # every SSE tick. Avoids re-scanning round files, goal
-            # tracker, and the `git status` subprocesses just to
-            # decide whether to emit EOF.
-            if _session_is_terminal_cheap(session_id):
-                for event in stream.mark_eof():
+            # Steady-state loop. Drive poll() (may be a no-op if the cache
+            # watcher or another concurrent handler already polled), then
+            # forward any retained events newer than what this client has
+            # already sent. Using the deque as the source of truth means
+            # multiple concurrent SSE clients on the same stream all
+            # receive every event without racing on _offset.
+            last_heartbeat = time.time()
+            while True:
+                stream.poll()
+                catchup, in_window = stream.replay(client_last_id)
+                for event in catchup:
                     yield _sse_frame(event)
                     client_last_id = event['id']
-                return
+                if not in_window:
+                    for event in stream.snapshot():
+                        yield _sse_frame(event)
+                        client_last_id = event['id']
 
-            now = time.time()
-            if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL_SECONDS and not catchup:
-                yield ": keepalive\n\n"
-                last_heartbeat = now
-            time.sleep(_SSE_POLL_INTERVAL_SECONDS)
+                # Cheap disk probe instead of a full parse_session on
+                # every SSE tick. Avoids re-scanning round files, goal
+                # tracker, and the `git status` subprocesses just to
+                # decide whether to emit EOF.
+                if _session_is_terminal_cheap(session_id):
+                    for event in stream.mark_eof():
+                        yield _sse_frame(event)
+                        client_last_id = event['id']
+                    return
+
+                now = time.time()
+                if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL_SECONDS and not catchup:
+                    yield ": keepalive\n\n"
+                    last_heartbeat = now
+                time.sleep(_SSE_POLL_INTERVAL_SECONDS)
+        finally:
+            # Runs on normal EOF return, GeneratorExit (client
+            # disconnect), or any propagated exception, so the
+            # refcount always balances the earlier acquire.
+            _release_cache_watcher(cache_dir)
 
     response = Response(generate(), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
