@@ -596,6 +596,30 @@ with configured_app(host='::1', auth_token='', project_dir=project) as appmod:
     else:
         t_fail(f"IPv6 loopback bind: cross-origin should 403, got {r.status_code}")
 
+# Group 7d: malformed Origin ports are a controlled 403, not an
+# uncaught ValueError. ``urlparse`` accepts values like
+# ``http://host:bad`` or ``http://host:999999`` without raising, but
+# accessing ``.port`` raises ValueError. Without bracketing that access
+# in try/except, cancel/report/issue POSTs from a client sending such
+# a header would return 500 instead of the intended 403.
+print("\nGroup 7d: CSRF rejects malformed Origin ports with 403 (no 500)")
+with configured_app(host='127.0.0.1', auth_token='', project_dir=project) as appmod:
+    client = appmod.app.test_client()
+    for bad_origin in (
+        'http://localhost:bad',
+        'http://localhost:999999',
+        'http://localhost:-1',
+        'http://localhost:0.5',
+    ):
+        r = client.post(
+            '/api/sessions/2026-04-16_09-00-00/cancel',
+            headers={'Origin': bad_origin},
+        )
+        if r.status_code == 403:
+            t_pass(f"malformed Origin {bad_origin!r} -> 403 (not 500)")
+        else:
+            t_fail(f"malformed Origin {bad_origin!r} should 403, got {r.status_code}")
+
 # Group 8: cancel allows analyzing / finalizing phases (Round 8 P2 fix).
 # The dashboard previously rejected anything except status == 'active',
 # which made finalize-stuck loops uncancellable from the UI even

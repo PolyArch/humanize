@@ -342,7 +342,16 @@ def _origin_matches_request(origin_value):
     origin_host = (parsed.hostname or '').lower()
     if not origin_host:
         return False
-    origin_port = parsed.port or _default_port_for_scheme(parsed.scheme)
+    # ``urlparse`` succeeds for malformed Origin values like
+    # ``http://host:bad`` or ``http://host:999999``; the port is only
+    # validated when ``.port`` is accessed, which raises ValueError.
+    # Treat such values as non-matching so ``_enforce_csrf_protection``
+    # returns a controlled 403 instead of letting the exception bubble
+    # up as a 500.
+    try:
+        origin_port = parsed.port or _default_port_for_scheme(parsed.scheme)
+    except ValueError:
+        return False
 
     request_host, request_port = _parse_request_host_port()
     if origin_port != request_port:
