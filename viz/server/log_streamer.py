@@ -22,11 +22,21 @@ from __future__ import annotations
 import base64
 import os
 import threading
+import time
 from collections import deque
 from typing import Deque, Dict, List, Optional, Tuple
 
 SNAPSHOT_CHUNK_BYTES = 64 * 1024
 EVENT_RETENTION = 256
+# Idle-TTL for ``LogStreamRegistry`` entries that reach refcount=0
+# without having emitted EOF. After this many seconds with no active
+# consumer the stream is evicted even if its session is still live;
+# a later reconnect gets a fresh LogStream (the streaming contract's
+# out-of-window ``resync(overflow)`` path handles that cleanly). Keep
+# long enough to cover page reloads and brief tab switches, short
+# enough that briefly-opened sessions don't hold their retention
+# deque for the whole process lifetime.
+IDLE_STREAM_TTL_SECONDS = 300.0
 
 EVENT_SNAPSHOT = "snapshot"
 EVENT_APPEND = "append"
@@ -342,7 +352,7 @@ class LogStreamRegistry:
     replaying or emitting ``resync(overflow)`` + ``snapshot``.
     """
 
-    def __init__(self):
+    def __init__(self, idle_ttl_seconds: float = IDLE_STREAM_TTL_SECONDS):
         self._streams: Dict[Tuple[str, str], LogStream] = {}
         # Per-key active-consumer refcount. ``acquire`` / ``release``
         # pair around each SSE generator so the registry can drop a
@@ -352,6 +362,15 @@ class LogStreamRegistry:
         # so reconnects still hit the 256-event replay window that
         # the streaming contract mandates.
         self._refcounts: Dict[Tuple[str, str], int] = {}
+        # Monotonic timestamp recorded whenever a stream's refcount
+        # reaches zero without EOF (active-session disconnect). The
+        # idle-TTL sweep in ``release`` uses this to evict entries
+        # that would otherwise accumulate when users briefly open
+        # many active sessions and never revisit them; the streaming
+        # contract's ``resync(overflow)`` path handles the late
+        # reconnect case when a client comes back after eviction.
+        self._idle_since: Dict[Tuple[str, str], float] = {}
+        self._idle_ttl_seconds = idle_ttl_seconds
         self._lock = threading.Lock()
 
     def get_or_create(self, cache_dir: str, session_id: str, basename: str) -> LogStream:
@@ -384,22 +403,31 @@ class LogStreamRegistry:
                 stream = LogStream(cache_dir, basename)
                 self._streams[key] = stream
             self._refcounts[key] = self._refcounts.get(key, 0) + 1
+            # Reset idle clock: a new consumer means the earlier
+            # idle-since timestamp no longer applies.
+            self._idle_since.pop(key, None)
             return stream
 
     def release(self, session_id: str, basename: str) -> None:
-        """Decrement the consumer count and evict idle terminal streams.
+        """Decrement the consumer count and evict idle streams.
 
-        Eviction conditions: refcount reaches zero AND the stream has
-        already emitted ``eof``. Dropping the entry frees the 256-event
-        retention deque (which can hold large base64 snapshot chunks),
-        so long-running dashboard instances do not accumulate stale
-        per-session buffers after the sessions terminate. Streams
-        whose sessions are still active stay resident so reconnects
-        receive the contract-required replay or resync(overflow)
-        sequence.
+        Eviction strategy:
+        - refcount reaches zero AND the stream has emitted ``eof`` →
+          drop immediately; no future client needs the retention deque.
+        - refcount reaches zero without EOF → start an idle timer for
+          this key so the eventual sweep (below) can evict it once
+          ``IDLE_STREAM_TTL_SECONDS`` elapse with no reconnect. The
+          stream stays resident for the TTL window so the common
+          page-reload-then-reconnect flow still hits the 256-event
+          ``Last-Event-Id`` replay window the contract mandates.
+        - every release also sweeps the registry for OTHER entries
+          whose idle timer has expired. Without this sweep, streams
+          whose clients disconnected before the session terminated
+          (and whose sessions later ended silently with no other
+          poll) would live for the entire process lifetime — the
+          very leak Codex flagged in Round 23.
         """
         key = (session_id, basename)
-        to_drop: Optional[LogStream] = None
         with self._lock:
             remaining = self._refcounts.get(key, 0) - 1
             if remaining > 0:
@@ -408,12 +436,37 @@ class LogStreamRegistry:
             self._refcounts.pop(key, None)
             stream = self._streams.get(key)
             if stream is not None and stream.eof_emitted:
-                to_drop = self._streams.pop(key, None)
-        # Nothing to clean up outside the lock today, but the variable
-        # keeps the intent explicit and localised in case LogStream
-        # later grows an explicit close/free method (e.g. mmap release
-        # for large retention windows).
-        del to_drop
+                self._streams.pop(key, None)
+                self._idle_since.pop(key, None)
+            else:
+                # No EOF yet: start the idle timer so the sweep below
+                # (and every future release) can eventually evict this
+                # stream if no one reconnects.
+                self._idle_since[key] = time.monotonic()
+            self._sweep_idle_streams_locked()
+
+    def _sweep_idle_streams_locked(self) -> None:
+        """Drop refcount=0 entries whose idle TTL has elapsed.
+
+        Called from within ``release`` while holding ``self._lock``.
+        Every release doubles as an opportunistic sweep so idle
+        retention buffers do not accumulate even when the sessions
+        they belong to never reach a terminal state during the
+        browser's visit. Keeps the operation O(N) in registry size,
+        which in practice stays small (dozens of unique session logs
+        per dashboard instance).
+        """
+        if not self._idle_since:
+            return
+        now = time.monotonic()
+        expired = [
+            key for key, ts in self._idle_since.items()
+            if now - ts >= self._idle_ttl_seconds
+            and self._refcounts.get(key, 0) <= 0
+        ]
+        for key in expired:
+            self._idle_since.pop(key, None)
+            self._streams.pop(key, None)
 
     def get(self, session_id: str, basename: str) -> Optional[LogStream]:
         with self._lock:
