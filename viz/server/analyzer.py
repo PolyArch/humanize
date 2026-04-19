@@ -53,8 +53,18 @@ def compute_analytics(sessions):
 
     total = len(sessions)
     completed = sum(1 for s in sessions if s['status'] == 'complete')
-    total_rounds = [s['current_round'] for s in sessions if s['current_round'] > 0]
-    avg_rounds = round(sum(total_rounds) / len(total_rounds), 1) if total_rounds else 0
+    # ``current_round`` is a 0-based *index*, not a count — a session
+    # that has finished round 0 reports ``current_round=0`` with one
+    # entry in ``s['rounds']``. Use the rounds list length (which the
+    # parser builds from ``range(max_disk_round + 1)``) so
+    # ``overview.average_rounds`` and the per-session ``rounds`` field
+    # reflect the true count. The prior ``current_round > 0`` filter
+    # also wrongly excluded single-round sessions, further skewing
+    # the average; drop the filter and accept any session that has
+    # at least one round entry.
+    rounds_counts = [len(s.get('rounds') or []) for s in sessions]
+    rounds_counts = [n for n in rounds_counts if n > 0]
+    avg_rounds = round(sum(rounds_counts) / len(rounds_counts), 1) if rounds_counts else 0
     rounds_per_day = _rounds_per_day(sessions, window_days=14)
 
     # Verdict distribution — only count rounds that have an actual review result
@@ -80,7 +90,10 @@ def compute_analytics(sessions):
     bitlesson_growth = []
 
     for s in sessions:
-        rounds_count = s['current_round']
+        # Same 0-based-index fix as the overview above: use the parsed
+        # rounds list so a session with only round 0 still reports
+        # ``rounds=1`` instead of 0.
+        rounds_count = len(s.get('rounds') or [])
 
         # Average round duration
         durations = [r['duration_minutes'] for r in s['rounds'] if r.get('duration_minutes')]
