@@ -1095,9 +1095,15 @@ def _build_sanitized_issue(session):
 
     # Build issue #62 body using ONLY taxonomy-derived phrasing
     s = session
+    # ``current_round`` is a 0-based index, not a round *count*. Using
+    # it verbatim printed ``0-round`` for sessions that only finished
+    # round 0 and under-reported every other session by one. The
+    # parser-built ``rounds`` list is the authoritative count — its
+    # length matches ``max_disk_round + 1``.
+    round_total = len(s.get('rounds') or [])
     body_lines = [
         '## Context\n',
-        f'A {s["current_round"]}-round RLCR session ended with status: {s["status"]}.',
+        f'A {round_total}-round RLCR session ended with status: {s["status"]}.',
     ]
     if s.get('ac_total', 0) > 0:
         body_lines.append(f'Acceptance criteria: {s["ac_done"]}/{s["ac_total"]} verified.')
