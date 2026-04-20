@@ -4,7 +4,7 @@
 # Exit codes:
 #   0 - Success
 #   1 - Missing idea input or empty input file
-#   2 - Input looks like a path but is unreadable, not .md, or does not exist
+#   2 - Input looks like a path but is not readable, not .md, or does not exist
 #   3 - Output parent directory does not exist (user-supplied path only)
 #   4 - Output file already exists
 #   5 - No write permission to output directory
@@ -104,6 +104,11 @@ if [[ -f "$IDEA_INPUT" ]]; then
     if [[ "$IDEA_INPUT" != *.md ]]; then
         echo "VALIDATION_ERROR: INPUT_NOT_MD"
         echo "File input must have .md extension; got: $IDEA_INPUT"
+        exit 2
+    fi
+    if [[ ! -r "$IDEA_INPUT" ]]; then
+        echo "VALIDATION_ERROR: INPUT_NOT_READABLE"
+        echo "Input file is not readable: $IDEA_INPUT"
         exit 2
     fi
     if [[ ! -s "$IDEA_INPUT" ]]; then
