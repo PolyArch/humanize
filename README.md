@@ -41,27 +41,33 @@ Requires [codex CLI](https://github.com/openai/codex) for review. See the full [
 
 ## Quick Start
 
-1. **Generate a plan** from your draft:
+1. **Generate an idea draft** from a loose thought (optional — skip if you already have a draft):
+   ```bash
+   /humanize:gen-idea "add undo/redo to the editor"
+   ```
+   Output goes to `.humanize/ideas/<slug>-<timestamp>.md` by default. Pass a `.md` path to expand existing rough notes. `--n` controls how many parallel directions explore the idea (default 6).
+
+2. **Generate a plan** from your draft:
    ```bash
    /humanize:gen-plan --input draft.md --output docs/plan.md
    ```
 
-2. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):
+3. **Refine an annotated plan** before implementation when reviewers add comments (`CMT:` ... `ENDCMT`, `<cmt>` ... `</cmt>`, or `<comment>` ... `</comment>`):
    ```bash
    /humanize:refine-plan --input docs/plan.md
    ```
 
-3. **Run the loop**:
+4. **Run the loop**:
    ```bash
    /humanize:start-rlcr-loop docs/plan.md
    ```
 
-4. **Consult Gemini** for deep web research (requires Gemini CLI):
+5. **Consult Gemini** for deep web research (requires Gemini CLI):
    ```bash
    /humanize:ask-gemini What are the latest best practices for X?
    ```
 
-5. **Monitor progress (in another terminal, not inside Claude Code)**:
+6. **Monitor progress (in another terminal, not inside Claude Code)**:
    ```bash
    source <path/to/humanize>/scripts/humanize.sh # Or just add it into your .bashec or .zshrc
    humanize monitor rlcr       # RLCR loop
