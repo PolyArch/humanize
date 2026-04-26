@@ -54,7 +54,7 @@ readonly DRIFT_STATUS_REPLAN_REQUIRED="replan_required"
 # Default Codex configuration (single source of truth - all scripts reference this)
 # Scripts can pre-set DEFAULT_CODEX_MODEL/DEFAULT_CODEX_EFFORT before sourcing to override.
 # Config-backed defaults are loaded from the merge hierarchy after config-loader.sh is sourced.
-# Precedence: pre-set value > config value > hardcoded fallback (gpt-5.4/high)
+# Precedence: pre-set value > config value > hardcoded fallback (gpt-5.5/high)
 #
 # The actual assignment happens in the "Config-backed defaults" section below,
 # after config-loader.sh has been sourced and merged config is available.
@@ -207,7 +207,7 @@ DEFAULT_BITLESSON_MODEL="${DEFAULT_BITLESSON_MODEL:-haiku}"
 
 # Load codex model/effort from merged config so .humanize/config.json can set persistent
 # defaults for all Codex-using features (RLCR, ask-codex).
-# Precedence: pre-set by caller > config value > hardcoded fallback (gpt-5.4/high)
+# Precedence: pre-set by caller > config value > hardcoded fallback (gpt-5.5/high)
 _cfg_codex_model="$(get_config_value "$_LOOP_COMMON_CONFIG" "codex_model" 2>/dev/null || true)"
 if [[ -n "$_cfg_codex_model" && ! "$_cfg_codex_model" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Warning: Invalid codex_model in merged config: $_cfg_codex_model" >&2
@@ -219,7 +219,7 @@ elif [[ -n "$_cfg_codex_model" && ! "$_cfg_codex_model" =~ ^(gpt-|o[0-9]) ]]; th
     echo "  Ignoring configured codex_model; using caller preset or fallback" >&2
     _cfg_codex_model=""
 fi
-DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-${_cfg_codex_model:-gpt-5.4}}"
+DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-${_cfg_codex_model:-gpt-5.5}}"
 _cfg_codex_effort="$(get_config_value "$_LOOP_COMMON_CONFIG" "codex_effort" 2>/dev/null || true)"
 if [[ -n "$_cfg_codex_effort" && ! "$_cfg_codex_effort" =~ ^(xhigh|high|medium|low)$ ]]; then
     echo "Warning: Invalid codex_effort in merged config: $_cfg_codex_effort" >&2
@@ -233,7 +233,9 @@ DEFAULT_CODEX_EFFORT="${DEFAULT_CODEX_EFFORT:-${_cfg_codex_effort:-high}}"
 # Precedence: pre-set by caller (e.g. --agent-teams flag) > config value > hardcoded fallback (false)
 _cfg_agent_teams="$(get_config_value "$_LOOP_COMMON_CONFIG" "agent_teams" 2>/dev/null || true)"
 DEFAULT_AGENT_TEAMS="${DEFAULT_AGENT_TEAMS:-${_cfg_agent_teams:-false}}"
-unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams
+_cfg_provider_mode="$(get_config_value "$_LOOP_COMMON_CONFIG" "provider_mode" 2>/dev/null || true)"
+DEFAULT_PROVIDER_MODE="${DEFAULT_PROVIDER_MODE:-$_cfg_provider_mode}"
+unset _cfg_codex_model _cfg_codex_effort _cfg_agent_teams _cfg_provider_mode
 
 unset _LOOP_COMMON_PROJECT_ROOT _LOOP_COMMON_CONFIG
 

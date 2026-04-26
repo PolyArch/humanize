@@ -130,7 +130,6 @@ start_branch: $current_branch
 base_branch: $current_branch
 base_commit: $base_commit
 push_every_round: false
-codex_model: gpt-5.4
 codex_effort: high
 codex_timeout: 120
 review_started: $review_started
@@ -204,6 +203,13 @@ if grep -q -- 'review --disable codex_hooks' "$TEST_DIR/review.args"; then
 else
     fail "review-phase stop hook disables codex_hooks for codex review" \
         "review --disable codex_hooks" "$(cat "$TEST_DIR/review.args" 2>/dev/null || echo missing)"
+fi
+
+if grep -q -- 'review_model=gpt-5.5' "$TEST_DIR/review.args"; then
+    pass "review-phase stop hook uses gpt-5.5 review model by default"
+else
+    fail "review-phase stop hook uses gpt-5.5 review model by default" \
+        "review_model=gpt-5.5" "$(cat "$TEST_DIR/review.args" 2>/dev/null || echo missing)"
 fi
 
 echo ""

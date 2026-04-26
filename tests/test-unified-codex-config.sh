@@ -65,8 +65,8 @@ DEFAULT_CONFIG="$PROJECT_ROOT/config/default_config.json"
 if ! command -v jq >/dev/null 2>&1; then
     skip "default config tests require jq" "jq not found"
 else
-    assert_eq "default_config.json: codex_model is gpt-5.4" \
-        "gpt-5.4" "$(jq -r '.codex_model' "$DEFAULT_CONFIG")"
+    assert_eq "default_config.json: codex_model is gpt-5.5" \
+        "gpt-5.5" "$(jq -r '.codex_model' "$DEFAULT_CONFIG")"
 
     assert_eq "default_config.json: codex_effort is high" \
         "high" "$(jq -r '.codex_effort' "$DEFAULT_CONFIG")"
@@ -100,8 +100,8 @@ else
 
     merged=$(XDG_CONFIG_HOME="$TEST_DIR/no-user-config" load_merged_config "$PROJECT_ROOT" "$PROJECT_DIR" 2>/dev/null)
 
-    assert_eq "default-only: codex_model defaults to gpt-5.4" \
-        "gpt-5.4" "$(get_config_value "$merged" "codex_model")"
+    assert_eq "default-only: codex_model defaults to gpt-5.5" \
+        "gpt-5.5" "$(get_config_value "$merged" "codex_model")"
 
     assert_eq "default-only: codex_effort defaults to high" \
         "high" "$(get_config_value "$merged" "codex_effort")"
@@ -119,6 +119,7 @@ else
 
     assert_eq "project override: codex_effort overrides default" \
         "xhigh" "$(get_config_value "$merged" "codex_effort")"
+
 fi
 
 echo ""
@@ -141,7 +142,7 @@ else
     " 2>/dev/null || echo "ERROR")
 
     assert_eq "loop-common.sh: DEFAULT_CODEX_MODEL is set" \
-        "gpt-5.4" "$(echo "$result" | cut -d'|' -f1)"
+        "gpt-5.5" "$(echo "$result" | cut -d'|' -f1)"
 
     assert_eq "loop-common.sh: DEFAULT_CODEX_EFFORT is set" \
         "high" "$(echo "$result" | cut -d'|' -f2)"
@@ -208,8 +209,8 @@ else
 
     result_line="$(printf '%s\n' "$result" | grep '^RESULT:' | tail -n 1)"
 
-    assert_eq "invalid config: codex_model falls back to gpt-5.4" \
-        "gpt-5.4" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
+    assert_eq "invalid config: codex_model falls back to gpt-5.5" \
+        "gpt-5.5" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
 
     assert_eq "invalid config: codex_effort falls back to high" \
         "high" "$(echo "$result_line" | cut -d'|' -f2)"
@@ -236,8 +237,8 @@ else
 
         result_line="$(printf '%s\n' "$result" | grep '^RESULT:' | tail -n 1)"
 
-        assert_eq "non-Codex config ($invalid_model): codex_model falls back to gpt-5.4" \
-            "gpt-5.4" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
+        assert_eq "non-Codex config ($invalid_model): codex_model falls back to gpt-5.5" \
+            "gpt-5.5" "$(echo "$result_line" | cut -d':' -f2 | cut -d'|' -f1)"
 
         assert_eq "non-Codex config ($invalid_model): codex_effort stays at high fallback" \
             "high" "$(echo "$result_line" | cut -d'|' -f2)"
@@ -324,8 +325,8 @@ BARE_EOF
         echo \"\$EXEC_MODEL|\$EXEC_EFFORT\"
     " 2>/dev/null || echo "ERROR")
 
-    assert_eq "bare state: falls back to DEFAULT_CODEX_MODEL (gpt-5.4)" \
-        "gpt-5.4" "$(echo "$result" | cut -d'|' -f1)"
+    assert_eq "bare state: falls back to DEFAULT_CODEX_MODEL (gpt-5.5)" \
+        "gpt-5.5" "$(echo "$result" | cut -d'|' -f1)"
 
     assert_eq "bare state: falls back to DEFAULT_CODEX_EFFORT (high)" \
         "high" "$(echo "$result" | cut -d'|' -f2)"

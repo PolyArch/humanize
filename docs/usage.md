@@ -76,7 +76,7 @@ OPTIONS:
   --plan-file <path>     Explicit plan file path (alternative to positional arg)
   --max <N>              Maximum iterations before auto-stop (default: 42)
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default from config, fallback gpt-5.4:high)
+                         Codex model and reasoning effort (default from config, fallback gpt-5.5:high)
   --codex-timeout <SECONDS>
                          Timeout for each Codex review in seconds (default: 5400)
   --track-plan-file      Indicate plan file should be tracked in git (must be clean)
@@ -240,7 +240,7 @@ translated plan and QA variants by inserting `_<code>` before the file extension
 
 OPTIONS:
   --codex-model <MODEL:EFFORT>
-                         Codex model and reasoning effort (default from config, fallback gpt-5.4:high)
+                         Codex model and reasoning effort (default from config, fallback gpt-5.5:high)
   --codex-timeout <SECONDS>
                          Timeout for the Codex query in seconds (default: 3600)
   -h, --help             Show help message
@@ -265,7 +265,7 @@ Current built-in keys:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `codex_model` | `gpt-5.4` | Shared default model for Codex-backed review and analysis |
+| `codex_model` | `gpt-5.5` | Shared default model for Codex-backed review and analysis |
 | `codex_effort` | `high` | Shared default reasoning effort (`xhigh`, `high`, `medium`, `low`) |
 | `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
 | `provider_mode` | unset | Optional runtime mode hint such as `codex-only` |
@@ -279,7 +279,7 @@ All Codex-using features (RLCR loop, ask-codex) share the same model configurati
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `codex_model` | `gpt-5.4` | Model used for Codex operations (reviews, analysis, queries) |
+| `codex_model` | `gpt-5.5` | Model used for Codex operations (reviews, analysis, queries) |
 | `codex_effort` | `high` | Reasoning effort (`xhigh`, `high`, `medium`, `low`) |
 
 To override, add to `.humanize/config.json`:
@@ -300,7 +300,7 @@ Codex model is resolved with this precedence:
 1. CLI `--codex-model` flag (highest priority)
 2. Feature-specific defaults
 3. Config-backed defaults from the 4-layer hierarchy above
-4. Hardcoded fallback (`gpt-5.4:high`)
+4. Hardcoded fallback (`gpt-5.5:high`)
 
 **Migration note**: If your `.humanize/config.json` contains the legacy keys
 `loop_reviewer_model` or `loop_reviewer_effort`, they are silently ignored.

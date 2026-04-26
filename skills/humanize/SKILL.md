@@ -72,8 +72,8 @@ After each round, write the required summary and stop/exit normally. Humanize's 
 
 **Common Options:**
 - `--max N` - Maximum iterations before auto-stop (default: 42)
-- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.4:high)
-- Review phase `codex review` uses `gpt-5.4:high`
+- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.5:high)
+- Review phase `codex review` uses `gpt-5.5:high`
 - `--codex-timeout SECONDS` - Timeout for each Codex review (default: 5400)
 - `--base-branch BRANCH` - Base branch for code review (auto-detects if not specified)
 - `--full-review-round N` - Interval for full alignment checks (default: 5)
