@@ -141,6 +141,16 @@ else
     fail "humanize-gen-plan skill documents gen_plan_check config" "gen_plan_check in SKILL.md" "missing"
 fi
 
+if [[ -f "$GEN_PLAN_SKILL" ]] \
+    && grep -q "spawn_agent" "$GEN_PLAN_SKILL" \
+    && grep -q "fork_context=false" "$GEN_PLAN_SKILL" \
+    && grep -q "draft-consistency-checker" "$GEN_PLAN_SKILL" \
+    && grep -q "plan-consistency-checker" "$GEN_PLAN_SKILL"; then
+    pass "humanize-gen-plan check mode requires native checker sub-agents"
+else
+    fail "humanize-gen-plan check mode sub-agent contract" "spawn_agent, fork_context=false, draft and plan checkers" "missing"
+fi
+
 if [[ -f "$GEN_PLAN_CMD" ]] && grep -q -- "--auto-start-rlcr-if-converged" "$GEN_PLAN_CMD"; then
     pass "gen-plan command exposes auto-start-if-converged option"
 else

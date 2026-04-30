@@ -163,8 +163,8 @@ Enable check mode by default via config (`gen_plan_check`):
 If the merged config contains an invalid value (anything other than `true` or `false`), a warning is printed and check mode falls back to disabled unless `--check` is passed.
 
 **Check mode behavior**:
-- `check-draft`: Runs after the relevance check and before plan generation. Detects contradictions and ambiguities in the draft that would affect plan generation. Blocker findings are presented to the user for clarification before the plan is generated.
-- `check-plan`: Runs after the plan body is written. Validates schema compliance, internal consistency, and draft-vs-plan drift. Findings are repaired using source-of-truth precedence: explicit user answers > original draft text > repository facts > safe leader-agent judgment.
+- `check-draft`: Runs after the relevance check and before plan generation. Semantic contradiction and ambiguity checks run through native sub-agents. Blocker findings are presented to the user for clarification before the plan is generated.
+- `check-plan`: Runs after the plan body is written. Deterministic schema validation runs locally; semantic consistency, ambiguity, and conditional draft-vs-plan drift checks run through native sub-agents. Findings are repaired using source-of-truth precedence: explicit user answers > original draft text > repository facts > safe leader-agent judgment.
 - `repair`: High-priority-source rewrites (clarifications, draft text, repo facts) are applied silently. Leader-agent-judgment rewrites require a diff preview and user confirmation.
 - `recheck`: Controlled by the existing `plan_check_recheck` config. When enabled and at least one repair changed plan bytes, `check-plan` runs once more in check-only mode (no further repair).
 

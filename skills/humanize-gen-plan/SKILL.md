@@ -53,13 +53,49 @@ flowchart TD
 - `--output <path/to/plan.md>` - Where to write the plan
 
 **Optional Arguments:**
-- `--check` - Enable integrated draft-check before plan generation and plan-check with targeted repair after plan generation.
+- `--check` - Enable integrated draft-check before plan generation and plan-check with targeted repair after plan generation. This is a request to run the semantic checkers through native Codex sub-agents.
 - `--no-check` - Disable integrated check mode for this invocation, overriding `--check` and config.
 - `--discussion` - Use iterative discussion mode.
 - `--direct` - Use direct mode.
 - `--auto-start-rlcr-if-converged` - Start RLCR automatically when discussion mode converges and check-mode gates pass.
 
 Check mode can also be enabled by the merged `gen_plan_check` config key. Effective priority is `--no-check` > `--check` > `gen_plan_check` > default disabled.
+
+## Check Mode Delegation Contract
+
+When effective check mode is true, treat it as an explicit user request for sub-agent based checking. Use Codex native `spawn_agent` / `wait_agent` for semantic draft and plan checks. Do not satisfy check mode by reading checker prompt files and performing all semantic checks only in the parent session.
+
+Payload boundary for checker sub-agents:
+- Spawn checker agents with `fork_context=false`.
+- Pass only the checker instructions and the exact draft or plan content needed for that checker.
+- Do not pass prior conversation history, project history, or unrelated repository context.
+- Close completed checker agents after collecting their final output.
+
+### Draft-Check Phase
+
+Run this phase after relevance passes and before creating the output plan when `EFFECTIVE_CHECK_MODE=true`.
+
+1. Initialize `.humanize/gen-plan-check/<timestamp>/` with `plan_check_init_report_dir`.
+2. Spawn one checker sub-agent for `draft-consistency-checker` and one for `draft-ambiguity-checker`.
+   - The draft consistency checker receives the raw draft and the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/draft-consistency-checker.md`.
+   - The draft ambiguity checker receives the raw draft and the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/draft-ambiguity-checker.md`.
+3. Wait for both checker agents and require each to return a JSON array matching the `findings.json` schema.
+4. If a checker fails or returns malformed JSON, retry that checker once with a fresh sub-agent. If it still fails, persist one `runtime-error` info finding for that checker and treat check mode as having unresolved blockers for auto-start gating.
+5. Merge draft findings into `${CHECK_REPORT_DIR}/draft-findings.json`.
+6. Resolve blocker findings with user clarification before generating the plan. Do not create the output file when the user aborts draft-check.
+
+### Plan-Check Phase
+
+Run this phase after the plan body has been written when `EFFECTIVE_CHECK_MODE=true`.
+
+1. Run deterministic schema validation locally with `plan_check_validate_schema`.
+2. Spawn one checker sub-agent for `plan-consistency-checker` and one for `plan-ambiguity-checker`.
+   - The plan consistency checker receives the generated plan body and the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/plan-consistency-checker.md`.
+   - The plan ambiguity checker receives the generated plan body and the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/plan-ambiguity-checker.md`.
+3. If the primary plan findings are non-empty, spawn a `draft-plan-drift-checker` sub-agent with only the plan body, original draft content, collected clarifications, and primary findings.
+4. Merge schema findings, primary semantic findings, and conditional draft-plan drift findings into `${CHECK_REPORT_DIR}/plan-findings.json`.
+5. Repair blocker findings using source-of-truth precedence: explicit user answers, original draft text, repository facts discovered during planning, safe leader-agent judgment, then generated plan text.
+6. If `plan_check_recheck` is enabled and repair changed bytes, repeat plan-check once in check-only mode using the same sub-agent contract.
 
 ## Plan Structure Output
 

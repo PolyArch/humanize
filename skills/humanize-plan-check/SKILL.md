@@ -9,8 +9,9 @@ user-invocable: false
 # Humanize Plan Check
 
 Use this flow as the Codex entrypoint for checking an existing Humanize plan.
-It mirrors the `/humanize:plan-check` Claude command, but it does not depend on
-Claude slash-command directories, `Task`, or `AskUserQuestion`.
+It mirrors the `/humanize:plan-check` Claude command, but it uses Codex native
+`spawn_agent` / `wait_agent` instead of Claude slash-command directories,
+`Task`, or `AskUserQuestion`.
 
 ## Runtime Root
 
@@ -70,14 +71,17 @@ Options:
    SCHEMA_FINDINGS="$(plan_check_validate_schema "$PLAN_FILE" "$SCHEMA_TEMPLATE")"
    ```
    `## Task Breakdown` is optional; when present, task tags, Target ACs, and dependencies are still validated. Wrap non-empty `SCHEMA_FINDINGS` as a JSON array; otherwise use `[]`.
-8. Run semantic checks directly in this Codex session.
-   - Do not call the Claude `Task` tool.
+8. Run semantic checks through native Codex sub-agents.
+   - Treat `$humanize-plan-check` as an explicit request to delegate semantic checking.
+   - Use `spawn_agent` / `wait_agent`; do not call the Claude `Task` tool.
    - Do not call nested `codex exec` unless the user explicitly asks.
+   - Spawn checker agents with `fork_context=false` and pass only the plan content plus checker instructions. Do not pass project history, prior conversation context, or background information.
    - Produce JSON-array findings matching the `findings.json` schema used by `plan-check.sh`.
    - Run two semantic passes:
      - contradiction pass using the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/plan-consistency-checker.md`
      - ambiguity pass using the intent of `{{HUMANIZE_RUNTIME_ROOT}}/agents/plan-ambiguity-checker.md`
-   - If a semantic pass cannot be completed, add one `runtime-error` info finding for that checker and continue.
+   - If a semantic pass fails or returns malformed JSON, retry that checker once with a fresh sub-agent. If it still cannot be completed, add one `runtime-error` info finding for that checker and continue.
+   - Close completed checker agents after collecting their final output.
 9. Merge deterministic and semantic findings into one JSON array.
    - Sort blockers first, then warnings, then infos.
    - Pipe the merged array through `plan_check_postprocess_ambiguity_ids`.

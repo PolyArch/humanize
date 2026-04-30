@@ -1700,6 +1700,16 @@ else
     fail "humanize-plan-check skill content" "runtime validation/report references" "missing"
 fi
 
+if grep -q "spawn_agent" "$PLAN_CHECK_SKILL" \
+    && grep -q "fork_context=false" "$PLAN_CHECK_SKILL" \
+    && grep -q "plan-consistency-checker" "$PLAN_CHECK_SKILL" \
+    && grep -q "plan-ambiguity-checker" "$PLAN_CHECK_SKILL" \
+    && ! grep -q "Run semantic checks directly in this Codex session" "$PLAN_CHECK_SKILL"; then
+    pass "humanize-plan-check skill requires native checker sub-agents"
+else
+    fail "humanize-plan-check sub-agent contract" "spawn_agent/fork_context and no direct-session semantic pass" "missing or direct-session fallback present"
+fi
+
 if sed -n '/^SKILL_NAMES=(/,/^)/p' "$INSTALL_SKILL_SCRIPT" | grep -qF '"humanize-plan-check"'; then
     pass "install-skill.sh includes humanize-plan-check in SKILL_NAMES"
 else
