@@ -29,7 +29,7 @@ This will:
 - Enable the experimental `codex_hooks` feature in `${CODEX_HOME:-~/.codex}/config.toml` when `codex` is available
 - Seed `~/.config/humanize/config.json` with a Codex/OpenAI `bitlesson_model` when that key is not already set
 - Mark the install as `provider_mode: "codex-only"` when using `--target codex`
-- Use RLCR defaults: `codex exec` with `gpt-5.4:high`, `codex review` with `gpt-5.4:high`
+- Use RLCR defaults: `codex exec` with `gpt-5.5:high`, `codex review` with `gpt-5.5:high`
 
 Requires Codex CLI `0.114.0` or newer for native hooks. Older Codex builds are not supported by the Codex install path.
 
@@ -77,7 +77,7 @@ sed -n '1,220p' "${CODEX_HOME:-$HOME/.codex}/hooks.json"
 Expected:
 - `codex_hooks` is `true`
 - `hooks.json` contains `loop-codex-stop-hook.sh`
-- `${XDG_CONFIG_HOME:-~/.config}/humanize/config.json` contains `bitlesson_model` set to a Codex/OpenAI model such as `gpt-5.4`
+- `${XDG_CONFIG_HOME:-~/.config}/humanize/config.json` contains `bitlesson_model` set to a Codex/OpenAI model such as `gpt-5.5`
 - for `--target codex`, `${XDG_CONFIG_HOME:-~/.config}/humanize/config.json` also contains `provider_mode: "codex-only"`
 
 ## Optional: Install for Both Codex and Kimi

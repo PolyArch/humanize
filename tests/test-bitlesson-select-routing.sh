@@ -393,7 +393,7 @@ echo ""
 setup_test_dir
 create_real_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
-printf '{"bitlesson_model": "haiku", "codex_model": "gpt-5.4", "provider_mode": "codex-only"}' > "$TEST_DIR/.humanize/config.json"
+printf '{"bitlesson_model": "haiku", "codex_model": "gpt-5.5", "provider_mode": "codex-only"}' > "$TEST_DIR/.humanize/config.json"
 FALLBACK_BIN="$TEST_DIR/fallback-bin"
 create_mock_codex "$FALLBACK_BIN"
 
@@ -419,7 +419,7 @@ echo ""
 setup_test_dir
 create_mock_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
-printf '{"bitlesson_model": "gpt-5.4"}' > "$TEST_DIR/.humanize/config.json"
+printf '{"bitlesson_model": "gpt-5.5"}' > "$TEST_DIR/.humanize/config.json"
 
 exit_code=0
 stdout_out=""
@@ -443,7 +443,7 @@ echo ""
 setup_test_dir
 create_real_bitlesson "$TEST_DIR"
 mkdir -p "$TEST_DIR/.humanize"
-printf '{"bitlesson_model": "gpt-5.4"}' > "$TEST_DIR/.humanize/config.json"
+printf '{"bitlesson_model": "gpt-5.5"}' > "$TEST_DIR/.humanize/config.json"
 CAPTURE_BIN="$TEST_DIR/capture-bin"
 mkdir -p "$CAPTURE_BIN"
 cat > "$CAPTURE_BIN/codex" <<'EOF'

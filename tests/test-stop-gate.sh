@@ -40,7 +40,7 @@ PLANEOF
 ---
 current_round: 0
 max_iterations: 42
-codex_model: gpt-5.4
+codex_model: gpt-5.5
 codex_effort: high
 codex_timeout: 60
 push_every_round: false

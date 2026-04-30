@@ -130,7 +130,7 @@ start_branch: $current_branch
 base_branch: $current_branch
 base_commit: $base_commit
 push_every_round: false
-codex_model: gpt-5.4
+codex_model: gpt-5.5
 codex_effort: high
 codex_timeout: 120
 review_started: $review_started

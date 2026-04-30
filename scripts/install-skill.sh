@@ -296,7 +296,7 @@ user_config = pathlib.Path(sys.argv[2])
 install_target = sys.argv[3]
 
 defaults = json.loads(default_config.read_text(encoding="utf-8"))
-default_codex_model = defaults.get("codex_model") or "gpt-5.4"
+default_codex_model = defaults.get("codex_model") or "gpt-5.5"
 
 if user_config.exists():
     try:
