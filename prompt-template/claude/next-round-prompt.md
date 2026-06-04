@@ -2,17 +2,23 @@ Your work is not finished. Read and execute the below with ultrathink.
 
 ## Original Implementation Plan
 
-**IMPORTANT**: Before proceeding, review the original plan you are implementing:
+**IMPORTANT**: Before proceeding, review the stable context pack first:
+@{{CONTEXT_PACK_FILE}}
+
+The original plan remains authoritative at:
 @{{PLAN_FILE}}
 
 This plan contains the full scope of work and requirements. Ensure your work aligns with this plan.
+
+Read the original plan whenever the context pack is insufficient, ambiguous, or conflicts with Codex feedback, code, summaries, or goal-tracker.md.
 
 ---
 
 ## Round Re-anchor (REQUIRED FIRST STEP)
 
 Before writing code:
-- Re-read @{{PLAN_FILE}}
+- Re-read @{{CONTEXT_PACK_FILE}}
+- Re-read @{{PLAN_FILE}} only if the context pack is insufficient, ambiguous, or in conflict with the review feedback
 - Re-read @{{GOAL_TRACKER_FILE}}
 - Re-read the most recent round summaries/reviews that led to this round
 - Write the current round contract to @{{ROUND_CONTRACT_FILE}}

@@ -1,23 +1,19 @@
-# Code Review - Round {{CURRENT_ROUND}}
+# Code Review
 
 ## Original Implementation Plan
 
 **IMPORTANT**: The original plan that Claude is implementing is located at:
 @{{PLAN_FILE}}
 
-You MUST read this plan file first to understand the full scope of work before conducting your review.
 This plan contains the complete requirements and implementation details that Claude should be following.
 
-Based on the original plan and @{{PROMPT_FILE}}, Claude claims to have completed the work. Please conduct a thorough critical review to verify this.
+For routine reviews, keep the reusable context prefix stable:
+- Read @{{CONTEXT_PACK_FILE}} and @{{GOAL_TRACKER_FILE}} first.
+- Do not re-read the original plan by default during routine review.
+- Read @{{PLAN_FILE}} if the context pack is insufficient, ambiguous, conflicts with the current summary, omits a requirement relevant to this round, or if an acceptance criterion, implementation boundary, plan change, deferral, or scope reinterpretation is unclear.
 
----
-Below is Claude's summary of the work completed:
-<!-- CLAUDE's WORK SUMMARY START -->
-{{SUMMARY_CONTENT}}
-<!-- CLAUDE's WORK SUMMARY  END  -->
----
+Based on the stable context and the current round prompt listed in the dynamic payload, Claude claims to have completed the work below. Please conduct a thorough critical review to verify this.
 
-{{COMMIT_HISTORY_SECTION}}
 
 ## Part 1: Implementation Review
 
@@ -37,7 +33,7 @@ Below is Claude's summary of the work completed:
 Read @{{GOAL_TRACKER_FILE}} and verify:
 
 1. **Acceptance Criteria Progress**: For each AC, is progress being made? Are any ACs being ignored?
-2. **Forgotten Items**: Are there tasks from the original plan that are not tracked in Active/Completed/Deferred?
+2. **Forgotten Items**: Are there tasks from the original plan that are not tracked in Active/Completed/Deferred? If the context pack is insufficient to answer this, read @{{PLAN_FILE}}.
 3. **Deferred Items**: Are deferrals justified? Do they block any ACs?
 4. **Plan Evolution**: If Claude modified the plan, is the justification valid?
 
@@ -68,9 +64,26 @@ If Claude mostly worked on queued side issues and failed to advance the mainline
 
 - In short, your review comments can include: problems/findings/blockers; claims that don't match reality; implementation plans for deferred work (to be implemented now); implementation plans for unfinished work; goal alignment issues.
 - Your output should be structured so Claude can tell which items are mainline gaps, blocking side issues, and queued side issues.
-- If after your investigation the actual situation does not match what Claude claims to have completed, or there is pending work to be done, output your review comments to @{{REVIEW_RESULT_FILE}}.
+- If after your investigation the actual situation does not match what Claude claims to have completed, or there is pending work to be done, output your review comments to the review result file listed in the dynamic payload.
 - **CRITICAL**: Only output "COMPLETE" as the last line if ALL tasks from the original plan are FULLY completed with no deferrals
   - DEFERRED items are considered INCOMPLETE - do NOT output COMPLETE if any task is deferred
   - UNFINISHED items are considered INCOMPLETE - do NOT output COMPLETE if any task is pending
   - The ONLY condition for COMPLETE is: all original plan tasks are done, all ACs are met, no deferrals or pending work allowed
 - The word COMPLETE on the last line will stop Claude.
+
+## Dynamic Round Payload
+
+Round: {{CURRENT_ROUND}}
+Current round prompt: @{{PROMPT_FILE}}
+
+Review result file: @{{REVIEW_RESULT_FILE}}
+
+
+---
+Below is Claude's summary of the work completed:
+<!-- CLAUDE's WORK SUMMARY START -->
+{{SUMMARY_CONTENT}}
+<!-- CLAUDE's WORK SUMMARY  END  -->
+---
+
+{{COMMIT_HISTORY_SECTION}}

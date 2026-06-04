@@ -1033,6 +1033,10 @@ fi
 
 # Calculate derived values for templates
 LOOP_TIMESTAMP=$(basename "$LOOP_DIR")
+CONTEXT_PACK_FILE=".humanize/rlcr/${LOOP_TIMESTAMP}/context-pack.md"
+if [[ ! -f "$PROJECT_ROOT/$CONTEXT_PACK_FILE" ]]; then
+    CONTEXT_PACK_FILE="$PLAN_FILE"
+fi
 COMPLETED_ITERATIONS=$((CURRENT_ROUND + 1))
 # Clamp previous round indices to 0 minimum to avoid negative file references
 # This can happen with --full-review-round 2 where first alignment check is at round 1
@@ -1084,13 +1088,21 @@ Review Claude's work against the plan and goal tracker. Check all goals are bein
 
 Write your review to {{REVIEW_RESULT_FILE}}. End with COMPLETE if done, or list issues."
 
-REGULAR_REVIEW_FALLBACK="# Code Review (Round {{CURRENT_ROUND}})
+REGULAR_REVIEW_FALLBACK="# Code Review
 
+Read @{{CONTEXT_PACK_FILE}} and @{{GOAL_TRACKER_FILE}} first. The original plan remains authoritative at @{{PLAN_FILE}}; read it if the stable context is insufficient or ambiguous.
 Review Claude's work for this round.
 
-## Claude's Summary
-{{SUMMARY_CONTENT}}
 
+## Dynamic Round Payload
+Round: {{CURRENT_ROUND}}
+
+---
+Below is Claude's summary of the work completed:
+<!-- CLAUDE's WORK SUMMARY START -->
+{{SUMMARY_CONTENT}}
+<!-- CLAUDE's WORK SUMMARY  END  -->
+---
 {{COMMIT_HISTORY_SECTION}}
 
 {{GOAL_TRACKER_UPDATE_SECTION}}
@@ -1118,6 +1130,7 @@ else
     load_and_render_safe "$TEMPLATE_DIR" "codex/regular-review.md" "$REGULAR_REVIEW_FALLBACK" \
         "CURRENT_ROUND=$CURRENT_ROUND" \
         "PLAN_FILE=$PLAN_FILE" \
+        "CONTEXT_PACK_FILE=$CONTEXT_PACK_FILE" \
         "PROMPT_FILE=$PROMPT_FILE" \
         "SUMMARY_CONTENT=$SUMMARY_CONTENT" \
         "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" \
@@ -2069,6 +2082,7 @@ if [[ "$DRIFT_REPLAN_REQUIRED" == "true" ]]; then
         "PLAN_FILE=$PLAN_FILE" \
         "REVIEW_CONTENT=$REVIEW_CONTENT" \
         "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" \
+        "CONTEXT_PACK_FILE=$CONTEXT_PACK_FILE" \
         "BITLESSON_FILE=$BITLESSON_FILE" \
         "ROUND_CONTRACT_FILE=$NEXT_CONTRACT_FILE" \
         "CURRENT_ROUND=$NEXT_ROUND" \
@@ -2079,6 +2093,7 @@ else
         "PLAN_FILE=$PLAN_FILE" \
         "REVIEW_CONTENT=$REVIEW_CONTENT" \
         "GOAL_TRACKER_FILE=$GOAL_TRACKER_FILE" \
+        "CONTEXT_PACK_FILE=$CONTEXT_PACK_FILE" \
         "BITLESSON_FILE=$BITLESSON_FILE" \
         "ROUND_CONTRACT_FILE=$NEXT_CONTRACT_FILE" \
         "CURRENT_ROUND=$NEXT_ROUND" \

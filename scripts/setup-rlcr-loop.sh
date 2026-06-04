@@ -56,9 +56,30 @@ PRIVACY_MODE="true"
 
 extract_plan_goal_content() {
     local plan_path="$1"
-    local goal_section=""
-
-    goal_section=$({ sed -n '/^##[[:space:]]*[Gg]oal\|^##[[:space:]]*[Oo]bjective\|^##[[:space:]]*[Pp]urpose/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -20 | tail -n +2 | head -10)
+    local goal_section
+    goal_section=$(awk '
+        BEGIN { in_section = 0; emitted = 0 }
+        /^##[[:space:]]+/ {
+            lower = tolower($0)
+            if (in_section) {
+                exit
+            }
+            if (lower ~ /^##[[:space:]]*(goal|objective|purpose)([[:space:]]|$)/) {
+                in_section = 1
+            }
+            next
+        }
+        in_section {
+            if (emitted == 0 && $0 ~ /^[[:space:]]*$/) {
+                next
+            }
+            print
+            emitted++
+            if (emitted >= 10) {
+                exit
+            }
+        }
+    ' "$plan_path")
     if [[ -n "$goal_section" ]]; then
         printf '%s\n' "$goal_section"
         return
@@ -85,7 +106,29 @@ extract_plan_goal_content() {
 
 extract_plan_ac_content() {
     local plan_path="$1"
-    { sed -n '/^##[[:space:]]*[Aa]cceptance\|^##[[:space:]]*[Cc]riteria\|^##[[:space:]]*[Rr]equirements/,/^##/p' "$plan_path" 2>/dev/null || true; } | head -30 | tail -n +2 | head -25
+    awk '
+        BEGIN { in_section = 0; emitted = 0 }
+        /^##[[:space:]]+/ {
+            lower = tolower($0)
+            if (in_section) {
+                exit
+            }
+            if (lower ~ /^##[[:space:]]*(acceptance|criteria|requirements)([[:space:]]|$)/) {
+                in_section = 1
+            }
+            next
+        }
+        in_section {
+            if (emitted == 0 && $0 ~ /^[[:space:]]*$/) {
+                next
+            }
+            print
+            emitted++
+            if (emitted >= 25) {
+                exit
+            }
+        }
+    ' "$plan_path"
 }
 
 show_help() {
@@ -855,6 +898,61 @@ else
     cp "$FULL_PLAN_PATH" "$LOOP_DIR/plan.md"
 fi
 
+# Create an immutable context pack once per loop. Follow-up prompts reference this
+# stable file instead of re-embedding the full plan, which keeps reusable prompt
+# prefixes stable while preserving the original plan as the source of truth.
+CONTEXT_PACK_FILE="$LOOP_DIR/context-pack.md"
+CONTEXT_PACK_REL=".humanize/rlcr/$TIMESTAMP/context-pack.md"
+if command -v sha256sum >/dev/null 2>&1; then
+    PLAN_SHA256=$(sha256sum "$LOOP_DIR/plan.md" | awk '{print $1}')
+else
+    PLAN_SHA256=$(shasum -a 256 "$LOOP_DIR/plan.md" | awk '{print $1}')
+fi
+PLAN_GOAL_DIGEST=$(extract_plan_goal_content "$LOOP_DIR/plan.md")
+PLAN_AC_DIGEST=$(extract_plan_ac_content "$LOOP_DIR/plan.md")
+
+if [[ -z "$PLAN_GOAL_DIGEST" ]]; then
+    PLAN_GOAL_DIGEST="Use the original plan at $PLAN_FILE as the source of truth for the loop objective."
+fi
+
+if [[ -z "$PLAN_AC_DIGEST" ]]; then
+    PLAN_AC_DIGEST="- Acceptance criteria must be read from the original plan at $PLAN_FILE before implementation or review decisions."
+fi
+
+cat > "$CONTEXT_PACK_FILE" << EOF
+# RLCR Context Pack
+
+This file is generated once when the RLCR loop starts. Treat it as an immutable
+stable context prefix. If the plan evolves, record the change in goal-tracker.md
+or the current round contract instead of editing this file.
+
+## Source Identity
+
+- Plan file: $PLAN_FILE
+- Plan SHA256: $PLAN_SHA256
+- Project root: $PROJECT_ROOT
+- Start branch: $START_BRANCH
+- Base branch: $BASE_BRANCH
+- Base commit: $BASE_COMMIT
+
+## Goal Digest
+
+$PLAN_GOAL_DIGEST
+
+## Acceptance Criteria Digest
+
+$PLAN_AC_DIGEST
+
+## Source of Truth Rules
+
+- The original plan remains available at @$PLAN_FILE and is authoritative.
+- Use this context pack as the stable first read for routine re-anchoring.
+- Read the original plan whenever this digest is insufficient, ambiguous, or in conflict with code, summaries, reviews, or goal-tracker.md.
+- Full alignment reviews must read the original plan directly.
+- Deferrals are incomplete unless explicitly approved by the user and recorded in goal-tracker.md.
+EOF
+
+
 # Docs path default
 DOCS_PATH="docs"
 
@@ -904,6 +1002,7 @@ privacy_mode: $PRIVACY_MODE
 bitlesson_required: $BITLESSON_STATE_VALUE
 bitlesson_file: $BITLESSON_FILE_REL
 bitlesson_allow_empty_none: $BITLESSON_ALLOW_EMPTY_NONE
+context_pack_file: $CONTEXT_PACK_REL
 mainline_stall_count: 0
 last_mainline_verdict: unknown
 drift_status: normal
@@ -1322,6 +1421,14 @@ Use this contract to keep the round focused. Do NOT let non-blocking bugs or cle
 
 ---
 
+## Stable Context
+
+Read @$CONTEXT_PACK_REL first. The context pack is the stable digest for routine re-anchoring and prompt-cache reuse.
+
+The original full plan is still the source of truth at @$PLAN_FILE. Read the original plan whenever the context pack is insufficient, ambiguous, or conflicts with code, summaries, reviews, or goal-tracker.md.
+
+---
+
 ## Implementation Plan
 
 For all tasks that need to be completed, please use the Task system (TaskCreate, TaskUpdate, TaskList).
@@ -1348,8 +1455,6 @@ Each task must have one routing tag from the plan: \`coding\` or \`analyze\`.
 
 EOF
 
-# Append plan content directly (avoids command substitution size limits for large files)
-cat "$LOOP_DIR/plan.md" >> "$LOOP_DIR/round-0-prompt.md"
 
 # Append BitLesson Selection section
 cat >> "$LOOP_DIR/round-0-prompt.md" << EOF
