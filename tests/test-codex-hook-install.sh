@@ -43,12 +43,12 @@ set -euo pipefail
 
 if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then
     cat <<'LIST'
-codex_hooks                      under development  false
+hooks                            stable             false
 LIST
     exit 0
 fi
 
-if [[ "${1:-}" == "features" && "${2:-}" == "enable" && "${3:-}" == "codex_hooks" ]]; then
+if [[ "${1:-}" == "features" && "${2:-}" == "enable" && "${3:-}" == "hooks" ]]; then
     printf 'CODEX_HOME=%s\n' "${CODEX_HOME:-}" >> "${TEST_CODEX_FEATURE_LOG:?}"
     mkdir -p "${CODEX_HOME:?}"
     : > "${CODEX_HOME}/.codex-hooks-enabled"
@@ -134,9 +134,9 @@ else
 fi
 
 if [[ -f "$CODEX_HOME_DIR/.codex-hooks-enabled" ]]; then
-    pass "Codex install enables codex_hooks feature"
+    pass "Codex install enables hooks feature"
 else
-    fail "Codex install enables codex_hooks feature" ".codex-hooks-enabled marker exists" "missing"
+    fail "Codex install enables hooks feature" ".codex-hooks-enabled marker exists" "missing"
 fi
 
 if [[ -f "$HUMANIZE_USER_CONFIG" ]]; then
@@ -323,11 +323,11 @@ else
     fail "Codex install rejects builds without native hooks support" "non-zero exit" "exit 0"
 fi
 
-if grep -q "codex_hooks feature" "$TEST_DIR/install-unsupported.log"; then
-    pass "Unsupported Codex failure explains missing codex_hooks feature"
+if grep -q "hooks/codex_hooks feature" "$TEST_DIR/install-unsupported.log"; then
+    pass "Unsupported Codex failure explains missing hooks/codex_hooks feature"
 else
-    fail "Unsupported Codex failure explains missing codex_hooks feature" \
-        "error mentioning codex_hooks feature" \
+    fail "Unsupported Codex failure explains missing hooks/codex_hooks feature" \
+        "error mentioning hooks/codex_hooks feature" \
         "$(cat "$TEST_DIR/install-unsupported.log")"
 fi
 

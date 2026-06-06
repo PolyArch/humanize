@@ -1167,17 +1167,32 @@ mkdir -p "$CACHE_DIR"
 # portable-timeout.sh already sourced above
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-# Probe whether the installed Codex CLI supports --disable; cache the result per loop
-# so older builds do not fail with an unknown-argument error.
+# Newer Codex builds expose the feature as "hooks"; older builds used
+# "codex_hooks". Cache the detected feature name per loop.
 CODEX_DISABLE_HOOKS_ARGS=()
-_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
+_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-feature"
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
-    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
-else
-    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    _CODEX_DISABLE_HOOKS_FEATURE="$(cat "$_CODEX_FEATURE_CACHE")"
+    if [[ "$_CODEX_DISABLE_HOOKS_FEATURE" == "hooks" || "$_CODEX_DISABLE_HOOKS_FEATURE" == "codex_hooks" ]]; then
+        CODEX_DISABLE_HOOKS_ARGS=(--disable "$_CODEX_DISABLE_HOOKS_FEATURE")
+    fi
+fi
+if [[ ${#CODEX_DISABLE_HOOKS_ARGS[@]} -eq 0 ]]; then
+    _CODEX_HELP_TEXT="$(codex --help 2>&1 || true)"
+    if grep -q -- '--disable' <<< "$_CODEX_HELP_TEXT"; then
+        _CODEX_FEATURE_LIST="$(codex features list 2>/dev/null || true)"
+        if grep -qE '^hooks[[:space:]]' <<< "$_CODEX_FEATURE_LIST"; then
+            _CODEX_DISABLE_HOOKS_FEATURE="hooks"
+        elif grep -qE '^codex_hooks[[:space:]]' <<< "$_CODEX_FEATURE_LIST"; then
+            _CODEX_DISABLE_HOOKS_FEATURE="codex_hooks"
+        else
+            _CODEX_DISABLE_HOOKS_FEATURE="codex_hooks"
+        fi
+        CODEX_DISABLE_HOOKS_ARGS=(--disable "$_CODEX_DISABLE_HOOKS_FEATURE")
+        echo "$_CODEX_DISABLE_HOOKS_FEATURE" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    else
+        : > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    fi
 fi
 
 # Build command arguments for summary review (codex exec)

@@ -449,6 +449,11 @@ mkdir -p "$CAPTURE_BIN"
 cat > "$CAPTURE_BIN/codex" <<'EOF'
 #!/usr/bin/env bash
 # Respond to help probes with supported flags
+if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then
+    echo "hooks                            stable             true"
+    exit 0
+fi
+
 for arg in "$@"; do
     if [[ "$arg" == "--help" ]]; then
         echo "  --disable <feature>   Disable a feature"
@@ -481,7 +486,7 @@ captured_args="$(cat "$CAPTURE_ARGS")"
 if [[ $exit_code -eq 0 ]] \
     && echo "$stdout_out" | grep -q "BL-20260315-tracker-drift" \
     && echo "$captured_args" | grep -q -- '--disable' \
-    && echo "$captured_args" | grep -q -- 'codex_hooks' \
+    && echo "$captured_args" | grep -q -- 'hooks' \
     && echo "$captured_args" | grep -q -- '--skip-git-repo-check' \
     && echo "$captured_args" | grep -q -- '--ephemeral' \
     && echo "$captured_args" | grep -q -- 'read-only' \

@@ -191,15 +191,28 @@ run_selector() {
 
     if [[ "$provider" == "codex" ]]; then
         local codex_exec_args=()
-        # Probe whether the installed Codex CLI supports --disable flag
-        if codex --help 2>&1 | grep -q -- '--disable'; then
-            codex_exec_args+=("--disable" "codex_hooks")
+        local codex_help_text=""
+        local codex_exec_help_text=""
+        # Probe whether the installed Codex CLI supports --disable, then disable
+        # the active native hooks feature for this helper Codex invocation.
+        codex_help_text="$(codex --help 2>&1 || true)"
+        if grep -q -- '--disable' <<< "$codex_help_text"; then
+            local feature_list=""
+            feature_list="$(codex features list 2>/dev/null || true)"
+            if grep -qE '^hooks[[:space:]]' <<< "$feature_list"; then
+                codex_exec_args+=("--disable" "hooks")
+            elif grep -qE '^codex_hooks[[:space:]]' <<< "$feature_list"; then
+                codex_exec_args+=("--disable" "codex_hooks")
+            else
+                codex_exec_args+=("--disable" "codex_hooks")
+            fi
         fi
         # Probe for --skip-git-repo-check and --ephemeral support
-        if codex exec --help 2>&1 | grep -q -- '--skip-git-repo-check'; then
+        codex_exec_help_text="$(codex exec --help 2>&1 || true)"
+        if grep -q -- '--skip-git-repo-check' <<< "$codex_exec_help_text"; then
             codex_exec_args+=("--skip-git-repo-check")
         fi
-        if codex exec --help 2>&1 | grep -q -- '--ephemeral'; then
+        if grep -q -- '--ephemeral' <<< "$codex_exec_help_text"; then
             codex_exec_args+=("--ephemeral")
         fi
         codex_exec_args+=(

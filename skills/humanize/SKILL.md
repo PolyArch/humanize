@@ -45,7 +45,7 @@ The RLCR (Ralph-Loop with Codex Review) loop has two phases:
 - Issues marked with `[P0-9]` severity markers
 - If issues found → AI fixes them and continues
 - If no issues → loop completes with Finalize Phase
-- On Codex CLI `0.114.0+` with `codex_hooks` enabled, Humanize installs a native `Stop` hook so exit gating runs automatically
+- On Codex CLI `0.114.0+` with native hooks enabled (`hooks` on current builds, `codex_hooks` on older builds), Humanize installs a native `Stop` hook so exit gating runs automatically
 
 ### 2. Generate Plan - Structured Plan from Draft
 

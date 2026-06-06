@@ -23,7 +23,7 @@ Usage:
 Options:
   --codex-config-dir PATH  Codex config dir (default: ${CODEX_HOME:-~/.codex})
   --runtime-root PATH      Installed Humanize runtime root (default: <codex-config-dir>/skills/humanize)
-  --skip-enable-feature    Do not run `codex features enable codex_hooks`
+  --skip-enable-feature    Do not run `codex features enable <hooks-feature>`
   --dry-run                Print actions without writing
   -h, --help               Show help
 EOF
@@ -71,14 +71,32 @@ done
 [[ -f "$HOOKS_TEMPLATE" ]] || die "hook template not found: $HOOKS_TEMPLATE"
 
 HOOKS_FILE="$CODEX_CONFIG_DIR/hooks.json"
+CODEX_HOOKS_FEATURE=""
 
-require_codex_hooks_support() {
+detect_codex_hooks_feature() {
     if ! command -v codex >/dev/null 2>&1; then
         die "Codex CLI with native hooks support is required. Install Codex 0.114.0+ first."
     fi
 
-    if ! codex features list 2>/dev/null | grep -qE '^codex_hooks[[:space:]]'; then
-        die "Installed Codex CLI does not expose the codex_hooks feature. Humanize Codex install requires Codex 0.114.0+."
+    local features
+    features="$(codex features list 2>/dev/null)" || return 1
+
+    if grep -qE '^hooks[[:space:]]' <<< "$features"; then
+        CODEX_HOOKS_FEATURE="hooks"
+        return 0
+    fi
+
+    if grep -qE '^codex_hooks[[:space:]]' <<< "$features"; then
+        CODEX_HOOKS_FEATURE="codex_hooks"
+        return 0
+    fi
+
+    return 1
+}
+
+require_codex_hooks_support() {
+    if ! detect_codex_hooks_feature; then
+        die "Installed Codex CLI does not expose the hooks/codex_hooks feature. Humanize Codex install requires native hooks support."
     fi
 }
 
@@ -177,10 +195,12 @@ enable_feature() {
 
     [[ "$ENABLE_FEATURE" == "true" ]] || return 0
 
-    if CODEX_HOME="$config_dir" codex features enable codex_hooks >/dev/null 2>&1; then
-        log "enabled codex_hooks feature in $config_dir/config.toml"
+    [[ -n "$CODEX_HOOKS_FEATURE" ]] || detect_codex_hooks_feature || die "could not determine Codex hooks feature name"
+    local feature="$CODEX_HOOKS_FEATURE"
+    if CODEX_HOME="$config_dir" codex features enable "$feature" >/dev/null 2>&1; then
+        log "enabled $feature feature in $config_dir/config.toml"
     else
-        die "failed to enable codex_hooks feature automatically in $config_dir/config.toml"
+        die "failed to enable $feature feature automatically in $config_dir/config.toml"
     fi
 }
 
@@ -193,7 +213,7 @@ require_codex_hooks_support
 if [[ "$DRY_RUN" == "true" ]]; then
     log "DRY-RUN merge $HOOKS_TEMPLATE -> $HOOKS_FILE"
     if [[ "$ENABLE_FEATURE" == "true" ]]; then
-        log "DRY-RUN enable codex_hooks feature in $CODEX_CONFIG_DIR/config.toml"
+        log "DRY-RUN enable $CODEX_HOOKS_FEATURE feature in $CODEX_CONFIG_DIR/config.toml"
     fi
     exit 0
 fi
