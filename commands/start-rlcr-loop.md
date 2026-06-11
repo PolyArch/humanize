@@ -1,6 +1,6 @@
 ---
 description: "Start iterative loop with Codex review"
-argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--claude-answer-codex] [--agent-teams] [--yolo] [--skip-quiz] [--privacy]"
+argument-hint: "[path/to/plan.md | --plan-file path/to/plan.md] [--max N] [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] [--track-plan-file] [--push-every-round] [--base-branch BRANCH] [--full-review-round N] [--skip-impl] [--claude-answer-codex] [--agent-teams] [--yolo] [--skip-quiz] [--privacy] [--no-privacy] [--strict-success]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-rlcr-loop.sh:*)"
   - "Read"
@@ -181,9 +181,13 @@ By default, empty `.humanize/bitlesson.md` does not block `Action: none`; use `-
 
 ## Stopping the Loop
 
-- Reach the maximum iteration count
+- Reach the maximum iteration count, unless `--strict-success` is enabled
 - Codex confirms completion with "COMPLETE", followed by successful code review (no `[P0-9]` issues)
 - User runs `/humanize:cancel-rlcr-loop`
+
+With `--strict-success`, max-iteration and stagnation STOP checks become
+recovery prompts instead of terminal exits. Use this when an optimization loop
+must continue until the measured acceptance target is actually met.
 
 ## Two-Phase System
 

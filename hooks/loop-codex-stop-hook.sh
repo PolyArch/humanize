@@ -141,6 +141,7 @@ CODEX_TIMEOUT="${STATE_CODEX_TIMEOUT:-${CODEX_TIMEOUT:-$DEFAULT_CODEX_TIMEOUT}}"
 ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-false}"
 AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
 PRIVACY_MODE="${STATE_PRIVACY_MODE:-true}"
+STRICT_SUCCESS="${STATE_STRICT_SUCCESS:-false}"
 BITLESSON_REQUIRED="false"
 if [[ -n "$RAW_BITLESSON_REQUIRED" ]]; then
     BITLESSON_REQUIRED=$(echo "$RAW_BITLESSON_REQUIRED" | sed 's/^bitlesson_required:[[:space:]]*//' | tr -d ' "')
@@ -207,7 +208,7 @@ fi
 
 if [[ ! "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
     echo "Warning: State file corrupted (max_iterations not numeric), using default" >&2
-    MAX_ITERATIONS=42
+    MAX_ITERATIONS=84
 fi
 
 if [[ ! "$MAINLINE_STALL_COUNT" =~ ^[0-9]+$ ]]; then
@@ -216,6 +217,10 @@ if [[ ! "$MAINLINE_STALL_COUNT" =~ ^[0-9]+$ ]]; then
 fi
 LAST_MAINLINE_VERDICT=$(normalize_mainline_progress_verdict "$LAST_MAINLINE_VERDICT")
 DRIFT_STATUS=$(normalize_drift_status "$DRIFT_STATUS")
+if [[ "$STRICT_SUCCESS" != "true" && "$STRICT_SUCCESS" != "false" ]]; then
+    echo "Warning: Invalid strict_success '$STRICT_SUCCESS', defaulting to false" >&2
+    STRICT_SUCCESS="false"
+fi
 
 # ========================================
 # Quick-check 0: Schema Validation (v1.1.2+ fields)
@@ -654,7 +659,14 @@ Please commit all changes before allowing the loop to exit.
                 exit 0
             fi
         fi
-        # Analysis complete and tree clean, allow exit
+        # Analysis complete and tree clean. Now do the terminal rename so the
+        # active state file stays in place until this cleanliness gate passes.
+        _meth_exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null | tr -d '[:space:]' || echo "")
+        if [[ -n "$_meth_exit_reason" ]]; then
+            mv "$LOOP_DIR/methodology-analysis-state.md" "$LOOP_DIR/${_meth_exit_reason}-state.md" 2>/dev/null || true
+            rm -f "$LOOP_DIR/.methodology-exit-reason"
+            echo "Methodology analysis complete. State preserved as: $LOOP_DIR/${_meth_exit_reason}-state.md" >&2
+        fi
         exit 0
     else
         # Analysis not yet complete, block
@@ -962,7 +974,7 @@ NEXT_ROUND=$((CURRENT_ROUND + 1))
 # Skip max iterations check in Finalize Phase or Review Phase
 # - Finalize Phase: already received COMPLETE from codex
 # - Review Phase: must continue until [P?] issues are cleared, regardless of iteration count
-if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ "$REVIEW_STARTED" != "true" ]] && [[ $NEXT_ROUND -gt $MAX_ITERATIONS ]]; then
+if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ "$REVIEW_STARTED" != "true" ]] && [[ $NEXT_ROUND -gt $MAX_ITERATIONS ]] && [[ "$STRICT_SUCCESS" != "true" ]]; then
     echo "RLCR loop did not complete, but reached max iterations ($MAX_ITERATIONS). Exiting." >&2
     # Try to enter methodology analysis phase before final exit
     if enter_methodology_analysis_phase "maxiter" "Reached max iterations ($MAX_ITERATIONS) without completion"; then
@@ -970,6 +982,8 @@ if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ "$REVIEW_STARTED" != "true" ]] && 
     fi
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER"
     exit 0
+elif [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ "$REVIEW_STARTED" != "true" ]] && [[ $NEXT_ROUND -gt $MAX_ITERATIONS ]]; then
+    echo "Strict success mode: max iterations ($MAX_ITERATIONS) reached, but loop will continue until acceptance criteria are met." >&2
 fi
 
 # ========================================
@@ -1172,12 +1186,15 @@ mkdir -p "$CACHE_DIR"
 CODEX_DISABLE_HOOKS_ARGS=()
 _CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
-    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable hooks)
 else
-    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    CODEX_HELP_OUTPUT="$(codex --help </dev/null 2>&1 || true)"
+    if grep -q -- '--disable' <<< "$CODEX_HELP_OUTPUT"; then
+        CODEX_DISABLE_HOOKS_ARGS=(--disable hooks)
+        echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    else
+        echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    fi
 fi
 
 # Build command arguments for summary review (codex exec)
@@ -1228,6 +1245,8 @@ run_codex_code_review() {
     local prompt_fallback="# Code Review Phase - Round ${round}
 
 This file documents the code review invocation for audit purposes.
+Compatibility note: Codex 0.130.0 rejects [PROMPT] input, including - stdin, when --base is used.
+Humanize must not pass prompt input when --base is used; this file is audit-only.
 Provider: codex
 
 ## Review Configuration
@@ -1256,14 +1275,14 @@ Provider: codex
         echo "# Review base ($review_base_type): $review_base"
         echo "# Timeout: $CODEX_TIMEOUT seconds"
         echo ""
-        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
+        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
     } > "$CODEX_REVIEW_CMD_FILE"
 
     echo "Code review command saved to: $CODEX_REVIEW_CMD_FILE" >&2
     echo "Running codex review with timeout ${CODEX_TIMEOUT}s in $PROJECT_ROOT (base: $review_base)..." >&2
 
     CODEX_REVIEW_EXIT_CODE=0
-    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
+    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review ${CODEX_DISABLE_HOOKS_ARGS[@]+"${CODEX_DISABLE_HOOKS_ARGS[@]}"} --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
         > "$CODEX_REVIEW_LOG_FILE" 2>&1 || CODEX_REVIEW_EXIT_CODE=$?
 
     echo "Code review exit code: $CODEX_REVIEW_EXIT_CODE" >&2
@@ -1682,7 +1701,7 @@ CODEX_PROMPT_CONTENT=$(cat "$REVIEW_PROMPT_FILE")
     echo "# Working directory: $PROJECT_ROOT"
     echo "# Timeout: $CODEX_TIMEOUT seconds"
     echo ""
-    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
+    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
     echo ""
     echo "# Prompt content:"
     echo "$CODEX_PROMPT_CONTENT"
@@ -1692,7 +1711,7 @@ echo "Codex command saved to: $CODEX_CMD_FILE" >&2
 echo "Running summary review with timeout ${CODEX_TIMEOUT}s..." >&2
 
 CODEX_EXIT_CODE=0
-printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
+printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec ${CODEX_DISABLE_HOOKS_ARGS[@]+"${CODEX_DISABLE_HOOKS_ARGS[@]}"} "${CODEX_EXEC_ARGS[@]}" - \
     > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
 
 echo "Codex exit code: $CODEX_EXIT_CODE" >&2
@@ -1870,13 +1889,15 @@ if [[ "$LAST_LINE_TRIMMED" == "$MARKER_COMPLETE" ]]; then
     else
         # Implementation phase complete - transition to review phase
         # Max iterations check
-        if [[ $CURRENT_ROUND -ge $MAX_ITERATIONS ]]; then
+        if [[ $CURRENT_ROUND -ge $MAX_ITERATIONS && "$STRICT_SUCCESS" != "true" ]]; then
             echo "Codex review passed but at max iterations ($MAX_ITERATIONS). Terminating as MAXITER." >&2
             if enter_methodology_analysis_phase "maxiter" "Codex confirmed COMPLETE but at max iterations ($MAX_ITERATIONS)"; then
                 exit 0
             fi
             end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_MAXITER"
             exit 0
+        elif [[ $CURRENT_ROUND -ge $MAX_ITERATIONS ]]; then
+            echo "Strict success mode: COMPLETE arrived after max iterations; continuing into review/finalize instead of maxiter exit." >&2
         fi
 
         # Initialize skip tracking variables before any skip paths
@@ -1944,13 +1965,38 @@ Use \`/humanize:cancel-rlcr-loop\` to end this loop."
     run_and_handle_code_review "$((CURRENT_ROUND + 1))" "Loop: Finalize Phase - Code review passed"
 fi
 
+if [[ "$MAINLINE_DRIFT_STOP" == "true" ]] && [[ "$STRICT_SUCCESS" == "true" ]] && [[ "$LAST_LINE_TRIMMED" != "$MARKER_COMPLETE" ]]; then
+    echo "Strict success mode: mainline drift circuit breaker suppressed; forcing recovery/replan round." >&2
+    MAINLINE_DRIFT_STOP=false
+    DRIFT_REPLAN_REQUIRED=true
+    NEXT_DRIFT_STATUS="$DRIFT_STATUS_REPLAN_REQUIRED"
+    REVIEW_CONTENT="$REVIEW_CONTENT
+
+## Strict Success Mode Override
+
+The reviewer detected repeated mainline drift. Do not stop the loop. Re-anchor on the original acceptance criteria, choose a narrower recovery objective, and continue until the target is actually met."
+fi
+
 if [[ "$MAINLINE_DRIFT_STOP" == "true" ]] && [[ "$LAST_LINE_TRIMMED" != "$MARKER_STOP" ]] && [[ "$LAST_LINE_TRIMMED" != "$MARKER_COMPLETE" ]]; then
     echo "Mainline progress stalled for $NEXT_MAINLINE_STALL_COUNT consecutive rounds. Triggering drift circuit breaker." >&2
     stop_for_mainline_drift "$NEXT_MAINLINE_STALL_COUNT" "$NEXT_LAST_MAINLINE_VERDICT"
 fi
 
 # Handle STOP - circuit breaker triggered
-if [[ "$LAST_LINE_TRIMMED" == "$MARKER_STOP" ]]; then
+if [[ "$LAST_LINE_TRIMMED" == "$MARKER_STOP" && "$STRICT_SUCCESS" == "true" ]]; then
+    echo "Strict success mode: STOP marker suppressed; forcing recovery/replan round." >&2
+    DRIFT_REPLAN_REQUIRED=true
+    NEXT_DRIFT_STATUS="$DRIFT_STATUS_REPLAN_REQUIRED"
+    if [[ "$NEXT_MAINLINE_STALL_COUNT" -lt 1 ]]; then
+        NEXT_MAINLINE_STALL_COUNT=1
+    fi
+    NEXT_LAST_MAINLINE_VERDICT="$MAINLINE_VERDICT_STALLED"
+    REVIEW_CONTENT="$REVIEW_CONTENT
+
+## Strict Success Mode Override
+
+The reviewer requested STOP, but this loop is configured to stop only after the acceptance target is met. Treat the STOP rationale as recovery input: replan, choose a smaller falsifiable milestone, and continue."
+elif [[ "$LAST_LINE_TRIMMED" == "$MARKER_STOP" ]]; then
     echo "" >&2
     echo "========================================" >&2
     if [[ "$FULL_ALIGNMENT_CHECK" == "true" ]]; then

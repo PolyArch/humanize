@@ -39,6 +39,7 @@ readonly FIELD_ASK_CODEX_QUESTION="ask_codex_question"
 readonly FIELD_SESSION_ID="session_id"
 readonly FIELD_AGENT_TEAMS="agent_teams"
 readonly FIELD_PRIVACY_MODE="privacy_mode"
+readonly FIELD_STRICT_SUCCESS="strict_success"
 readonly FIELD_MAINLINE_STALL_COUNT="mainline_stall_count"
 readonly FIELD_LAST_MAINLINE_VERDICT="last_mainline_verdict"
 readonly FIELD_DRIFT_STATUS="drift_status"
@@ -379,7 +380,7 @@ find_active_loop() {
         fi
 
         local stored_session_id
-        stored_session_id=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/'"${FIELD_SESSION_ID}"': *//; p; } }' "$any_state" 2>/dev/null | tr -d ' ')
+        stored_session_id=$(awk -v key="${FIELD_SESSION_ID}" 'BEGIN{f=0} /^---$/{f++; next} f==1 && $0 ~ "^"key":"{sub("^"key":[[:space:]]*",""); print; exit}' "$any_state" 2>/dev/null | tr -d ' ')
 
         # Empty stored session_id matches any session (backward compat).
         if [[ -z "$stored_session_id" ]] || [[ "$stored_session_id" == "$filter_session_id" ]]; then
@@ -463,6 +464,7 @@ _parse_state_fields() {
     STATE_SESSION_ID=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_SESSION_ID}:" | sed "s/${FIELD_SESSION_ID}: *//" || true)
     STATE_AGENT_TEAMS=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_AGENT_TEAMS}:" | sed "s/${FIELD_AGENT_TEAMS}: *//" | tr -d ' ' || true)
     STATE_PRIVACY_MODE=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_PRIVACY_MODE}:" | sed "s/${FIELD_PRIVACY_MODE}: *//" | tr -d ' ' || true)
+    STATE_STRICT_SUCCESS=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_STRICT_SUCCESS}:" | sed "s/${FIELD_STRICT_SUCCESS}: *//" | tr -d ' ' || true)
     STATE_MAINLINE_STALL_COUNT=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_MAINLINE_STALL_COUNT}:" | sed "s/${FIELD_MAINLINE_STALL_COUNT}: *//" | tr -d ' ' || true)
     STATE_LAST_MAINLINE_VERDICT=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_LAST_MAINLINE_VERDICT}:" | sed "s/${FIELD_LAST_MAINLINE_VERDICT}: *//" | tr -d ' ' || true)
     STATE_DRIFT_STATUS=$(echo "$STATE_FRONTMATTER" | grep "^${FIELD_DRIFT_STATUS}:" | sed "s/${FIELD_DRIFT_STATUS}: *//" | tr -d ' ' || true)
@@ -486,6 +488,7 @@ _parse_state_fields() {
 #   STATE_FULL_REVIEW_ROUND - interval for Full Alignment Check (default: 5)
 #   STATE_ASK_CODEX_QUESTION - "true" or "false" (v1.6.5+)
 #   STATE_AGENT_TEAMS - "true" or "false"
+#   STATE_STRICT_SUCCESS - "true" or "false"
 #   STATE_MAINLINE_STALL_COUNT - consecutive stalled/regressed implementation rounds
 #   STATE_LAST_MAINLINE_VERDICT - advanced/stalled/regressed/unknown
 #   STATE_DRIFT_STATUS - normal/replan_required
@@ -513,6 +516,7 @@ parse_state_file() {
     STATE_AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
     # Default privacy_mode to "true" for legacy loops that pre-date this field
     STATE_PRIVACY_MODE="${STATE_PRIVACY_MODE:-true}"
+    STATE_STRICT_SUCCESS="${STATE_STRICT_SUCCESS:-false}"
     STATE_MAINLINE_STALL_COUNT="${STATE_MAINLINE_STALL_COUNT:-0}"
     STATE_LAST_MAINLINE_VERDICT="${STATE_LAST_MAINLINE_VERDICT:-$MAINLINE_VERDICT_UNKNOWN}"
     STATE_DRIFT_STATUS="${STATE_DRIFT_STATUS:-$DRIFT_STATUS_NORMAL}"
@@ -592,6 +596,7 @@ parse_state_file_strict() {
     STATE_ASK_CODEX_QUESTION="${STATE_ASK_CODEX_QUESTION:-true}"
     STATE_AGENT_TEAMS="${STATE_AGENT_TEAMS:-false}"
     STATE_PRIVACY_MODE="${STATE_PRIVACY_MODE:-true}"
+    STATE_STRICT_SUCCESS="${STATE_STRICT_SUCCESS:-false}"
     STATE_MAINLINE_STALL_COUNT="${STATE_MAINLINE_STALL_COUNT:-0}"
     STATE_LAST_MAINLINE_VERDICT="${STATE_LAST_MAINLINE_VERDICT:-$MAINLINE_VERDICT_UNKNOWN}"
     STATE_DRIFT_STATUS="${STATE_DRIFT_STATUS:-$DRIFT_STATUS_NORMAL}"
@@ -809,8 +814,8 @@ extract_round_number() {
     local filename_lower
     filename_lower=$(to_lower "$filename")
 
-    # Use sed for portable regex extraction (works in both bash and zsh)
-    echo "$filename_lower" | sed -n 's/.*round-\([0-9][0-9]*\)-\(summary\|prompt\|todos\|contract\)\.md$/\1/p'
+    # Use ERE (-E) so | alternation works on both GNU and BSD sed (macOS)
+    echo "$filename_lower" | sed -En 's/.*round-([0-9]+)-(summary|prompt|todos|contract)\.md$/\1/p'
 }
 
 # Check if a file is in the allowlist for the active loop
@@ -820,6 +825,11 @@ is_allowlisted_file() {
     local file_path="$1"
     local active_loop_dir="$2"
 
+    # Canonicalize both paths to resolve symlinks (e.g. /var -> /private/var on macOS).
+    local canonical_file canonical_loop
+    canonical_file=$(canonicalize_path "$file_path" 2>/dev/null || echo "$file_path")
+    canonical_loop=$(canonicalize_path "$active_loop_dir" 2>/dev/null || echo "$active_loop_dir")
+
     local allowlist=(
         "round-1-todos.md"
         "round-2-todos.md"
@@ -828,7 +838,7 @@ is_allowlisted_file() {
     )
 
     for allowed in "${allowlist[@]}"; do
-        if [[ "$file_path" == "$active_loop_dir/$allowed" ]]; then
+        if [[ "$canonical_file" == "$canonical_loop/$allowed" ]]; then
             return 0
         fi
     done
@@ -1522,7 +1532,7 @@ Use Write or Edit on: {{CORRECT_PATH}}
 
 Rules:
 - Keep the **IMMUTABLE SECTION** unchanged
-- Do not modify `goal-tracker.md` via Bash
+- Do not modify goal-tracker.md via Bash
 - Do not write to an old loop session's tracker"
 
     load_and_render_safe "$TEMPLATE_DIR" "block/goal-tracker-modification.md" "$fallback" \

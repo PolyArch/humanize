@@ -1,0 +1,4 @@
+interface:
+  display_name: "Classify Operator Family"
+  short_description: "Classify operator code into a family."
+  default_prompt: "Classify this operator code and return only its family."

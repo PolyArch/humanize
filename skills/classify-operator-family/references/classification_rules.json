@@ -1,0 +1,397 @@
+{
+  "schema_version": "1.0",
+  "source_file": "op_family.md",
+  "regex_dialect": "Python/PCRE-style regular expressions",
+  "matching_guidance": {
+    "recommended_flags": [
+      "case_insensitive",
+      "dot_matches_newline"
+    ],
+    "normalization": [
+      "lowercase text before matching when possible",
+      "collapse repeated whitespace to one space for formula-like text",
+      "optionally strip namespaces such as torch., aten::, prim::, nn., nn.functional.",
+      "evaluate rules by ascending priority; first confident match wins"
+    ],
+    "confidence_hint": "operator_patterns match names or API calls; formula_patterns match semantic formula shapes and may intentionally be broader."
+  },
+  "disambiguation_rules": [
+    {
+      "when": "attention also matches matmul or softmax",
+      "choose": "attention"
+    },
+    {
+      "when": "fusion_simple also matches matmul, norm, or elementwise activation",
+      "choose": "fusion_simple"
+    },
+    {
+      "when": "pooling also matches reduction",
+      "choose": "pooling"
+    },
+    {
+      "when": "scan also matches reduction",
+      "choose": "scan"
+    },
+    {
+      "when": "convolution also matches matmul through im2col/unfold",
+      "choose": "convolution"
+    },
+    {
+      "when": "elementwise_complex also matches elementwise",
+      "choose": "elementwise_complex"
+    }
+  ],
+  "families": [
+    {
+      "family": "attention",
+      "priority": 10,
+      "examples_from_pp": [
+        "scaled_dot_product_attention",
+        "flash_attention",
+        "sparse_attention"
+      ],
+      "operator_patterns": [
+        "\\b(?:scaled[_ ]?dot[_ ]?product[_ ]?attention|sdpa)\\b",
+        "\\b(?:flash[_ ]?attn|flash[_ ]?attention)(?:[_ ]?v?\\d+)?\\b",
+        "\\b(?:multi[_ ]?head[_ ]?attention|mha|self[_ ]?attention|cross[_ ]?attention|sparse[_ ]?attention)\\b",
+        "\\b(?:torch\\.)?nn\\.functional\\.scaled_dot_product_attention\\b",
+        "\\baten::(?:scaled_dot_product_attention|_scaled_dot_product_flash_attention|_scaled_dot_product_efficient_attention)\\b"
+      ],
+      "formula_patterns": [
+        "(?=.*\\bsoftmax\\b)(?=.*\\b(?:q|query)\\b)(?=.*\\b(?:k|key)\\b)(?=.*\\b(?:v|value)\\b)(?=.*(?:@|matmul|bmm|einsum|qk|scores|attn))",
+        "\\bsoftmax\\s*\\([^\\)]*(?:q|query)[^\\)]*(?:@|matmul|bmm|\\*)[^\\)]*(?:k|key)[^\\)]*(?:transpose|\\.t\\s*\\(|\\.T|\\^T|sqrt|scale|head_dim|d_k|dk)[^\\)]*\\)\\s*(?:@|matmul|bmm|\\*)\\s*(?:v|value)\\b",
+        "\\b(?:q|query)\\s*(?:@|matmul|bmm|\\*)\\s*(?:k|key)(?:\\s*\\.\\s*(?:transpose|t)\\s*\\(|\\s*\\.T|\\s*\\^T|\\s*transpose)?[^\\n]{0,120}\\bsoftmax\\b[^\\n]{0,160}(?:@|matmul|bmm|\\*)\\s*(?:v|value)\\b",
+        "\\b(?:attn|attention)[_ ]?(?:scores|logits|weights|probs|probabilities)?\\b[^\\n]{0,180}\\bsoftmax\\b[^\\n]{0,180}\\b(?:value|values|v)\\b",
+        "\\b(?:qk|q_k|query_key|querykey|scores|logits)\\b[^\\n]{0,100}(?:/|\\*)\\s*(?:sqrt\\s*\\(\\s*(?:d_k|dk|head_dim|dim)[^\\)]*\\)|rsqrt\\s*\\(\\s*(?:d_k|dk|head_dim|dim)[^\\)]*\\)|scale)",
+        "\\b(?:causal|attn|attention)[_ ]?mask\\b[^\\n]{0,160}\\b(?:masked_fill|where|softmax)\\b",
+        "\\bmasked_fill\\s*\\([^\\)]*(?:-inf|float\\s*\\(\\s*['\\\"]-inf['\\\"]\\s*\\)|-1e\\d+)[^\\)]*\\)[^\\n]{0,120}\\bsoftmax\\b",
+        "\\b(?:dropout\\s*\\([^\\)]*softmax|softmax\\s*\\([^\\)]*\\)[^\\n]{0,80}dropout)\\b[^\\n]{0,160}(?:@|matmul|bmm|\\*)\\s*(?:v|value)",
+        "\\beinsum\\s*\\(\\s*['\\\"][^'\\\"]*(?:q|query)[^'\\\"]*(?:k|key)[^'\\\"]*->[^'\\\"]*(?:score|attn|prob|logit)?[^'\\\"]*['\\\"]",
+        "\\beinsum\\s*\\(\\s*['\\\"][a-z, ]*(?:q|i)[a-z]*d\\s*,\\s*[a-z]*(?:k|j)[a-z]*d\\s*->\\s*[a-z]*(?:q|i)[a-z]*(?:k|j)[a-z]*['\\\"]",
+        "\\b(?:attention|attn)[_ ]?(?:output|ctx|context)\\b[^\\n]{0,140}\\b(?:attn|attention)[_ ]?(?:weights|probs|probabilities)\\b[^\\n]{0,80}(?:@|matmul|bmm|\\*)\\s*(?:v|value)",
+        "\\b(?:kv[_ ]?cache|past[_ ]?key[_ ]?value|key[_ ]?value[_ ]?cache)\\b[^\\n]{0,180}\\b(?:attention|attn|softmax|qk)\\b"
+      ]
+    },
+    {
+      "family": "fusion_simple",
+      "priority": 20,
+      "examples_from_pp": [
+        "gelu_linear",
+        "fused_norm_act",
+        "fused_silu_linear"
+      ],
+      "operator_patterns": [
+        "\\b(?:gelu[_ ]?linear|linear[_ ]?gelu|silu[_ ]?linear|linear[_ ]?silu|relu[_ ]?linear|linear[_ ]?relu)\\b",
+        "\\b(?:fused[_ ]?(?:norm[_ ]?act|silu[_ ]?linear|gelu[_ ]?linear|bias[_ ]?gelu|bias[_ ]?act|linear[_ ]?activation))\\b",
+        "\\b(?:bias[_ ]?gelu|bias[_ ]?relu|bias[_ ]?silu|addmm[_ ]?gelu|matmul[_ ]?gelu)\\b",
+        "\\b(?:dropout[_ ]?add[_ ]?layer[_ ]?norm|bias[_ ]?dropout[_ ]?add|add[_ ]?bias[_ ]?residual[_ ]?layer[_ ]?norm)\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:gelu|silu|swish|relu|mish)\\s*\\(\\s*(?:linear\\s*\\(|addmm\\s*\\(|matmul\\s*\\(|mm\\s*\\(|bmm\\s*\\(|[^\\)]*(?:@|\\bmm\\s*\\(|\\bbmm\\s*\\()[^\\)]*)",
+        "\\b(?:linear|addmm|matmul|mm|bmm)\\s*\\([^\\)]*\\)[^\\n]{0,80}\\b(?:gelu|silu|swish|relu|mish)\\s*\\(",
+        "\\b(?:x|input|hidden|activation)\\s*(?:@|matmul|mm|bmm)\\s*(?:w|weight|kernel)[^\\n]{0,100}\\+\\s*(?:b|bias)[^\\n]{0,120}\\b(?:gelu|silu|swish|relu|mish)\\b",
+        "\\b(?:gelu|silu|swish|relu|mish)\\s*\\([^\\n]{0,120}(?:@|matmul|addmm|linear|mm|bmm)[^\\n]{0,120}\\)",
+        "\\b(?:layer[_ ]?norm|rms[_ ]?norm|batch[_ ]?norm|group[_ ]?norm)\\s*\\([^\\)]*\\)\\s*[^\\n]{0,80}\\b(?:gelu|silu|swish|relu|mish)\\s*\\(",
+        "\\b(?:gelu|silu|swish|relu|mish)\\s*\\([^\\n]{0,120}\\b(?:layer[_ ]?norm|rms[_ ]?norm|batch[_ ]?norm|group[_ ]?norm)\\s*\\(",
+        "\\b(?:bias|add|residual)\\b[^\\n]{0,80}\\b(?:gelu|relu|silu|swish)\\b[^\\n]{0,80}\\b(?:fused|fusion|fuse)\\b",
+        "\\bfused\\b[^\\n]{0,120}\\b(?:linear|matmul|addmm|norm|activation|act|bias|residual)\\b",
+        "\\b(?:bias\\s*\\+\\s*)?(?:gelu|relu|silu|swish)\\s*\\(\\s*(?:x|input|hidden)\\s*\\+\\s*(?:bias|b)\\s*\\)",
+        "\\b(?:norm|normalize)[^\\n]{0,80}\\+?[^\\n]{0,80}\\b(?:act|activation|gelu|relu|silu|swish)\\b[^\\n]{0,80}\\b(?:single[_ ]?kernel|fused)\\b"
+      ]
+    },
+    {
+      "family": "recurrent",
+      "priority": 30,
+      "examples_from_pp": [
+        "gru",
+        "lstm",
+        "causal_conv1d"
+      ],
+      "operator_patterns": [
+        "\\b(?:gru|lstm|rnn)(?:[_ ]?cell|cell)?\\b",
+        "\\b(?:causal[_ ]?conv1d|causal[_ ]?convolution[_ ]?1d)\\b",
+        "\\b(?:aten::(?:gru|lstm|rnn_tanh|rnn_relu)|mkldnn_rnn_layer)\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:h_t|h\\s*\\[\\s*t\\s*\\]|hidden_t|hidden\\s*\\[\\s*t\\s*\\])\\b[^\\n]{0,160}\\b(?:h_\\{?t-1\\}?|h\\s*\\[\\s*t\\s*-\\s*1\\s*\\]|prev_h|h_prev|hidden_prev)\\b",
+        "\\b(?:c_t|c\\s*\\[\\s*t\\s*\\]|cell_t|cell\\s*\\[\\s*t\\s*\\])\\b[^\\n]{0,160}\\b(?:c_\\{?t-1\\}?|c\\s*\\[\\s*t\\s*-\\s*1\\s*\\]|prev_c|c_prev|cell_prev)\\b",
+        "\\b(?:i_t|f_t|o_t|g_t|input_gate|forget_gate|output_gate|cell_gate)\\b[^\\n]{0,180}\\b(?:sigmoid|tanh)\\b[^\\n]{0,180}\\b(?:c_t|h_t|cell|hidden)\\b",
+        "\\b(?:z_t|r_t|n_t|update_gate|reset_gate|new_gate)\\b[^\\n]{0,180}\\b(?:sigmoid|tanh)\\b[^\\n]{0,180}\\b(?:h_t|hidden|prev_h|h_prev)\\b",
+        "\\bfor\\s+(?:t|time|step)\\s+in\\b[^\\n]{0,220}\\b(?:h|hidden|state|cell)\\s*(?:=|\\[\\s*t\\s*\\])",
+        "\\b(?:state|hidden|cell)\\s*=\\s*f\\s*\\(\\s*(?:state|hidden|cell|h)[^\\)]*(?:x|input)[^\\)]*\\)",
+        "\\b(?:recurrence|recurrent|time[_ ]?step|sequence[_ ]?step)\\b[^\\n]{0,160}\\b(?:hidden|state|cell|gate)\\b",
+        "\\b(?:causal[_ ]?conv1d|causal convolution)\\b[^\\n]{0,160}\\b(?:state|cache|time|step|sequence)\\b",
+        "\\by\\s*\\[\\s*(?:t|n)\\s*\\]\\s*=\\s*(?:sum|\\u03a3)[^\\n]{0,120}\\bx\\s*\\[\\s*(?:t|n)\\s*-\\s*(?:k|i|r)\\s*\\][^\\n]{0,120}\\b(?:w|weight|kernel)\\b",
+        "\\b(?:no[_ ]?future|causal|left[_ ]?padded)\\b[^\\n]{0,120}\\b(?:conv1d|convolution|kernel)\\b"
+      ]
+    },
+    {
+      "family": "convolution",
+      "priority": 40,
+      "examples_from_pp": [
+        "conv2d",
+        "conv1d",
+        "depthwise_conv"
+      ],
+      "operator_patterns": [
+        "\\b(?:conv(?:1d|2d|3d)?|convolution)\\b",
+        "\\b(?:depthwise[_ ]?conv(?:1d|2d|3d)?|dwconv(?:1d|2d|3d)?)\\b",
+        "\\b(?:separable[_ ]?conv(?:1d|2d|3d)?|pointwise[_ ]?conv|grouped[_ ]?conv)\\b",
+        "\\b(?:conv[_ ]?transpose(?:1d|2d|3d)?|transposed[_ ]?conv(?:1d|2d|3d)?)\\b",
+        "\\baten::(?:conv1d|conv2d|conv3d|convolution|_convolution|mkldnn_convolution|slow_conv_transpose2d)\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:conv|convolution)\\s*\\(",
+        "\\by\\s*\\[[^\\]]*(?:h|w|t|i|j)[^\\]]*\\]\\s*=\\s*(?:sum|\\u03a3)[^\\n]{0,180}\\bx\\s*\\[[^\\]]*(?:h|w|t|i|j)[^\\]]*(?:\\+|-)\\s*(?:kh|kw|r|s|k)[^\\]]*\\][^\\n]{0,160}\\b(?:w|weight|kernel)\\s*\\[",
+        "\\b(?:kernel|filter)\\b[^\\n]{0,100}\\b(?:stride|padding|dilation|groups)\\b[^\\n]{0,100}\\b(?:input|feature[_ ]?map|activation)\\b",
+        "\\b(?:im2col|unfold)\\b[^\\n]{0,120}\\b(?:kernel|filter|conv|convolution|weight)\\b",
+        "\\bgroups\\s*=\\s*(?:in_channels|channels|c_in|input_channels)\\b[^\\n]{0,100}\\b(?:depthwise|conv|convolution)\\b",
+        "\\b(?:dwconv|depthwise)\\b[^\\n]{0,100}\\b(?:kernel|filter|conv|convolution|channelwise)\\b",
+        "\\b(?:correlation|cross[_ ]?correlation)\\b[^\\n]{0,100}\\b(?:kernel|filter|feature[_ ]?map|image)\\b",
+        "\\b(?:nchw|nhwc|oihw|hwio|nct|ntc)\\b[^\\n]{0,120}\\b(?:kernel|filter|stride|padding|dilation)\\b",
+        "\\b(?:spatial|temporal)\\b[^\\n]{0,80}\\b(?:kernel|filter|receptive[_ ]?field)\\b[^\\n]{0,80}\\b(?:conv|convolution)\\b"
+      ]
+    },
+    {
+      "family": "matmul",
+      "priority": 50,
+      "examples_from_pp": [
+        "mm",
+        "bmm",
+        "addmm",
+        "linear",
+        "matmul"
+      ],
+      "operator_patterns": [
+        "\\b(?:mm|bmm|addmm|matmul|linear)\\s*\\(",
+        "\\b(?:torch\\.)?(?:mm|bmm|addmm|matmul|addbmm|baddbmm)\\s*\\(",
+        "\\b(?:aten::(?:mm|bmm|addmm|matmul|linear|addbmm|baddbmm))\\b",
+        "\\b(?:dense|fully[_ ]?connected|fc|gemm|batched[_ ]?gemm)\\b"
+      ],
+      "formula_patterns": [
+        "\\b[a-zA-Z_]\\w*\\s*@\\s*[a-zA-Z_]\\w*\\b",
+        "\\b(?:x|input|a|mat1)\\s*(?:@|\\*)\\s*(?:w|weight|b|mat2)(?:\\s*\\.\\s*(?:T|t\\s*\\(|transpose\\s*\\()|\\s*\\^T)?\\b",
+        "\\by\\s*=\\s*(?:x|input|a|mat1)\\s*(?:@|matmul\\s*\\(|mm\\s*\\(|bmm\\s*\\()\\s*(?:w|weight|b|mat2)",
+        "\\b(?:sum|\\u03a3)\\s*[_\\{]?\\s*(?:k|j|r)\\s*\\}?[^\\n]{0,120}\\b(?:a|x|input)\\s*\\[[^\\]]*(?:i|m|b)[^\\]]*,\\s*(?:k|j|r)[^\\]]*\\][^\\n]{0,120}\\b(?:b|w|weight)\\s*\\[[^\\]]*(?:k|j|r)[^\\]]*,\\s*(?:j|n|o)[^\\]]*\\]",
+        "\\beinsum\\s*\\(\\s*['\\\"][^'\\\"]*(?:m|b|i)[a-z]*k\\s*,\\s*[^'\\\"]*k[a-z]*(?:n|j|o)[^'\\\"]*->[^'\\\"]*(?:m|b|i)[a-z]*(?:n|j|o)[^'\\\"]*['\\\"]",
+        "\\b(?:alpha\\s*\\*\\s*)?(?:mat1|input|a|x)\\s*(?:@|matmul|mm)\\s*(?:mat2|b|weight|w)[^\\n]{0,100}(?:\\+|beta\\s*\\*)\\s*(?:self|bias|input|c)",
+        "\\b(?:x|input|activation)\\s*(?:@|matmul|mm)\\s*(?:w|weight)(?:\\.T|\\^T|\\s*\\.\\s*transpose\\s*\\()\\s*(?:\\+\\s*(?:b|bias))?",
+        "\\b(?:batch|batched)\\b[^\\n]{0,80}\\b(?:matrix[_ ]?multiply|matmul|gemm|bmm)\\b",
+        "\\b(?:matrix[_ ]?multiply|matrix product|dot product|inner product)\\b"
+      ]
+    },
+    {
+      "family": "softmax",
+      "priority": 60,
+      "examples_from_pp": [
+        "softmax",
+        "log_softmax"
+      ],
+      "operator_patterns": [
+        "\\b(?:softmax|log[_ ]?softmax)\\s*\\(",
+        "\\b(?:torch\\.)?(?:softmax|log_softmax)\\s*\\(",
+        "\\b(?:aten::(?:softmax|_softmax|log_softmax|_log_softmax))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:log[_ ]?)?softmax\\s*\\(",
+        "\\bexp\\s*\\([^\\)]*\\)\\s*/\\s*(?:sum|reduce_sum)\\s*\\(\\s*exp\\s*\\(",
+        "\\bexp\\s*\\(\\s*(?:x|logits|scores|input)\\s*-\\s*(?:max|amax)\\s*\\([^\\)]*\\)\\s*\\)\\s*/\\s*(?:sum|reduce_sum)\\s*\\(",
+        "\\blog\\s*\\(\\s*softmax\\s*\\(",
+        "\\b(?:x|logits|scores|input)\\s*-\\s*logsumexp\\s*\\(\\s*(?:x|logits|scores|input)",
+        "\\blogsumexp\\s*\\([^\\)]*\\)[^\\n]{0,100}\\b(?:subtract|minus|-)[^\\n]{0,100}\\b(?:logits|scores|x|input)\\b",
+        "\\b(?:normalize|normalise|probabilities|probs)\\b[^\\n]{0,120}\\bexp\\s*\\([^\\)]*\\)[^\\n]{0,120}\\b(?:sum|reduce_sum)\\b",
+        "\\b(?:dim|axis)\\s*=\\s*-?\\d+[^\\n]{0,80}\\b(?:softmax|log_softmax)\\b",
+        "\\b(?:logits|scores)\\b[^\\n]{0,120}\\b(?:probabilities|probs|distribution)\\b[^\\n]{0,120}\\bsoftmax\\b"
+      ]
+    },
+    {
+      "family": "norm",
+      "priority": 70,
+      "examples_from_pp": [
+        "layer_norm",
+        "rms_norm",
+        "batch_norm",
+        "group_norm"
+      ],
+      "operator_patterns": [
+        "\\b(?:layer[_ ]?norm|rms[_ ]?norm|batch[_ ]?norm|group[_ ]?norm)\\s*\\(",
+        "\\b(?:instance[_ ]?norm|local[_ ]?response[_ ]?norm|normalize|normalization)\\s*\\(",
+        "\\b(?:aten::(?:layer_norm|native_layer_norm|batch_norm|native_batch_norm|group_norm|rms_norm|instance_norm))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:layer|batch|group|rms|instance)[_ ]?norm\\s*\\(",
+        "\\b(?:x|input|hidden)\\s*-\\s*(?:mean|\\u03bc)\\s*\\([^\\)]*\\)[^\\n]{0,120}/\\s*(?:sqrt|rsqrt)\\s*\\(?[^\\n]{0,80}(?:var|variance|\\u03c3|eps|epsilon)",
+        "\\b(?:mean|reduce_mean)\\s*\\([^\\)]*(?:x|input|hidden)[^\\)]*\\)[^\\n]{0,120}\\b(?:var|variance|reduce_var)\\s*\\(",
+        "\\b(?:variance|var)\\s*\\([^\\)]*\\)[^\\n]{0,100}\\b(?:eps|epsilon)\\b[^\\n]{0,80}\\b(?:sqrt|rsqrt)\\b",
+        "\\b(?:gamma|weight|scale)\\s*\\*\\s*(?:normalized|normed|x_hat|\\(\\s*(?:x|input)[^\\)]*mean)[^\\n]{0,100}\\+\\s*(?:beta|bias|shift)",
+        "\\b(?:x|input|hidden)\\s*/\\s*sqrt\\s*\\(\\s*(?:mean|reduce_mean)\\s*\\([^\\)]*(?:\\^\\s*2|pow\\s*\\([^\\)]*,\\s*2|\\*\\s*(?:x|input|hidden))[^\\)]*\\)\\s*\\+\\s*(?:eps|epsilon)\\s*\\)",
+        "\\brsqrt\\s*\\(\\s*(?:mean|reduce_mean)\\s*\\([^\\)]*(?:square|pow|\\*|\\^\\s*2)[^\\)]*\\)\\s*\\+\\s*(?:eps|epsilon)\\s*\\)",
+        "\\b(?:running_mean|running_var|running_variance)\\b[^\\n]{0,160}\\b(?:batch|bn|normalize|norm)\\b",
+        "\\b(?:num_groups|groups)\\b[^\\n]{0,120}\\b(?:mean|variance|var)\\b[^\\n]{0,120}\\b(?:normalize|norm)\\b",
+        "\\b(?:center|zero[_ ]?mean)\\b[^\\n]{0,80}\\b(?:scale|unit[_ ]?variance|variance|standard[_ ]?deviation)\\b"
+      ]
+    },
+    {
+      "family": "pooling",
+      "priority": 80,
+      "examples_from_pp": [
+        "max_pool",
+        "avg_pool",
+        "adaptive_pool"
+      ],
+      "operator_patterns": [
+        "\\b(?:max[_ ]?pool|avg[_ ]?pool|average[_ ]?pool|adaptive[_ ]?pool)(?:1d|2d|3d)?\\b",
+        "\\b(?:adaptive[_ ]?(?:avg|max)[_ ]?pool(?:1d|2d|3d)?|global[_ ]?(?:avg|average|max)[_ ]?pool)\\b",
+        "\\b(?:aten::(?:max_pool1d|max_pool2d|max_pool3d|avg_pool1d|avg_pool2d|avg_pool3d|adaptive_avg_pool2d|adaptive_max_pool2d))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:max|avg|average|adaptive|global)[_ ]?pool(?:1d|2d|3d)?\\s*\\(",
+        "\\by\\s*\\[[^\\]]+\\]\\s*=\\s*(?:max|mean|avg)\\s*[_\\{]?\\s*(?:k|window|r|s)[^\\n]{0,120}\\bx\\s*\\[[^\\]]*(?:stride|h|w|t|i|j)[^\\]]*\\]",
+        "\\b(?:kernel_size|pool_size|window|pooling window)\\b[^\\n]{0,100}\\b(?:stride|padding|ceil_mode|adaptive)\\b",
+        "\\b(?:max|average|avg|mean)\\s+over\\s+(?:each\\s+)?(?:window|patch|spatial region|local region|pooling region)\\b",
+        "\\b(?:global[_ ]?average[_ ]?pool|global[_ ]?avg[_ ]?pool|gap|global[_ ]?max[_ ]?pool|gmp)\\b",
+        "\\b(?:adaptive)[_ ]?(?:avg|max)[_ ]?pool\\b[^\\n]{0,120}\\b(?:output_size|target_size)\\b",
+        "\\b(?:sliding|local)\\b[^\\n]{0,80}\\b(?:window|kernel)\\b[^\\n]{0,80}\\b(?:max|mean|average|avg)\\b",
+        "\\b(?:downsample|subsample)\\b[^\\n]{0,100}\\b(?:pool|max|average|avg)\\b"
+      ]
+    },
+    {
+      "family": "scan",
+      "priority": 90,
+      "examples_from_pp": [
+        "cumsum",
+        "cumprod"
+      ],
+      "operator_patterns": [
+        "\\b(?:cumsum|cumprod|cummax|cummin)\\s*\\(",
+        "\\b(?:cum(?:ulative)?[_ ]?(?:sum|prod|product|max|min)|prefix[_ ]?(?:sum|prod|product|max|min))\\b",
+        "\\b(?:inclusive[_ ]?scan|exclusive[_ ]?scan|associative[_ ]?scan)\\b",
+        "\\b(?:aten::(?:cumsum|cumprod|cummax|cummin))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:cum(?:ulative)?[_ ]?(?:sum|prod|product|max|min)|prefix[_ ]?(?:sum|prod|product|max|min)|inclusive[_ ]?scan|exclusive[_ ]?scan)\\b",
+        "\\by\\s*\\[\\s*(?:i|t|n)\\s*\\]\\s*=\\s*(?:sum|\\u03a3|prod|\\u03a0)[^\\n]{0,120}(?:j|k)\\s*(?:<=|<|\\\\le|\\u2264)\\s*(?:i|t|n)",
+        "\\b(?:running|prefix|cumulative)[_ ]?(?:total|product|sum|max|min)\\b",
+        "\\b(?:scan|associative_scan)\\s*\\(",
+        "\\b(?:out|y)\\s*\\[\\s*(?:i|t|n)\\s*\\]\\s*=\\s*(?:out|y)\\s*\\[\\s*(?:i|t|n)\\s*-\\s*1\\s*\\]\\s*(?:\\+|\\*|max|min)\\s*(?:x|input)\\s*\\[\\s*(?:i|t|n)\\s*\\]",
+        "\\b(?:exclusive|inclusive)\\b[^\\n]{0,80}\\b(?:prefix|scan|cumsum|cumprod)\\b",
+        "\\b(?:parallel[_ ]?prefix|blelloch|hillis[_ ]?steele)\\b[^\\n]{0,120}\\b(?:scan|sum|prod)\\b",
+        "\\b(?:partial[_ ]?sum|running[_ ]?sum|running[_ ]?product)\\b"
+      ]
+    },
+    {
+      "family": "sort_search",
+      "priority": 100,
+      "examples_from_pp": [
+        "sort",
+        "topk",
+        "argsort"
+      ],
+      "operator_patterns": [
+        "\\b(?:sort|argsort|topk|top_k|kthvalue|searchsorted|bucketize)\\s*\\(",
+        "\\b(?:argpartition|partition|nth_element|rank|ranking)\\b",
+        "\\b(?:aten::(?:sort|argsort|topk|kthvalue|searchsorted|bucketize))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:sort|argsort|topk|top_k|kthvalue|searchsorted|bucketize|argpartition)\\s*\\(",
+        "\\b(?:top|largest|smallest)[-_ ]?k\\b",
+        "\\b(?:k[_ ]?largest|k[_ ]?smallest|kth[_ ]?(?:largest|smallest|value))\\b",
+        "\\b(?:indices|idx|perm|permutation)\\s*=\\s*argsort\\b",
+        "\\by\\s*=\\s*sort\\s*\\(\\s*(?:x|input|values)",
+        "\\b(?:return_indices|sorted_indices|sort_index|rank|ranking|permutation)\\b[^\\n]{0,100}\\b(?:sort|argsort|topk)\\b",
+        "\\b(?:partition|select)\\b[^\\n]{0,80}\\bk(?:th)?\\b",
+        "\\barg\\s*sort\\b",
+        "\\b(?:take|gather)\\s*\\([^\\)]*(?:argsort|sorted_indices|perm)\\s*\\(",
+        "\\b(?:binary[_ ]?search|lower_bound|upper_bound)\\b[^\\n]{0,120}\\b(?:sorted|searchsorted|bucket)\\b"
+      ]
+    },
+    {
+      "family": "reduction",
+      "priority": 110,
+      "examples_from_pp": [
+        "sum",
+        "mean",
+        "max",
+        "argmax",
+        "reduce_*"
+      ],
+      "operator_patterns": [
+        "\\b(?:sum|mean|max|min|prod|argmax|argmin|all|any|count_nonzero|amax|amin)\\s*\\(",
+        "\\breduce_[a-z0-9_]+\\s*\\(",
+        "\\b(?:torch\\.)?(?:sum|mean|max|min|prod|argmax|argmin|amax|amin|var|std)\\s*\\(",
+        "\\b(?:aten::(?:sum|mean|max|min|prod|argmax|argmin|amax|amin|var|std|all|any))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:sum|mean|max|min|prod|argmax|argmin|all|any|count_nonzero|reduce_[a-z0-9_]+|amax|amin)\\s*\\(",
+        "\\b(?:reduce|reduction)\\b[^\\n]{0,100}\\b(?:sum|mean|max|min|prod|and|or|argmax|argmin)\\b",
+        "\\b(?:sum|\\u03a3)\\s*[_\\{]?\\s*(?:i|j|k|n|c|h|w|dim|axis)\\b",
+        "\\b(?:prod|product|\\u03a0)\\s*[_\\{]?\\s*(?:i|j|k|n|c|h|w|dim|axis)\\b",
+        "\\b(?:mean|average|avg)\\s*[_\\{]?\\s*(?:i|j|k|n|c|h|w|dim|axis)\\b",
+        "\\b(?:max|min)\\s*[_\\{]?\\s*(?:i|j|k|n|c|h|w|dim|axis)\\b",
+        "\\b(?:arg\\s*max|arg\\s*min)\\s*[_\\{]?",
+        "\\b(?:keepdim|axis|dim)\\s*=\\s*-?\\d+[^\\n]{0,100}\\b(?:sum|mean|max|min|prod|argmax|argmin|amax|amin)\\b",
+        "\\b(?:variance|var|std|standard[_ ]?deviation)\\b[^\\n]{0,100}\\b(?:axis|dim|reduce|mean)\\b",
+        "\\b(?:count|numel)\\b[^\\n]{0,80}\\b(?:nonzero|true|valid|mask)\\b",
+        "\\b(?:logical|boolean)\\b[^\\n]{0,80}\\b(?:all|any|and|or)\\b[^\\n]{0,80}\\b(?:axis|dim|reduce)\\b"
+      ]
+    },
+    {
+      "family": "elementwise_complex",
+      "priority": 120,
+      "examples_from_pp": [
+        "swiglu",
+        "silu",
+        "gelu",
+        "geglu",
+        "mish"
+      ],
+      "operator_patterns": [
+        "\\b(?:swiglu|geglu|reglu|glu|silu|swish|gelu|mish)\\s*\\(",
+        "\\b(?:aten::(?:silu|gelu|mish|glu))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:swiglu|geglu|reglu|glu|silu|swish|gelu|mish)\\s*\\(",
+        "\\b(?:x|input)\\s*\\*\\s*sigmoid\\s*\\(\\s*(?:x|input)\\s*\\)",
+        "\\b(?:x|input)\\s*\\*\\s*tanh\\s*\\(\\s*softplus\\s*\\(\\s*(?:x|input)\\s*\\)\\s*\\)",
+        "\\b0\\.5\\s*\\*\\s*(?:x|input)[^\\n]{0,80}\\*\\s*\\(\\s*1\\s*\\+\\s*(?:erf|tanh)\\s*\\(",
+        "\\berf\\s*\\(\\s*(?:x|input)\\s*/\\s*sqrt\\s*\\(\\s*2\\s*\\)\\s*\\)",
+        "\\btanh\\s*\\([^\\n]{0,80}(?:0\\.044715|sqrt\\s*\\(\\s*2\\s*/\\s*pi\\s*\\)|0\\.797884)[^\\n]{0,120}\\)",
+        "\\b(?:a|x1|up|value)\\s*\\*\\s*(?:silu|swish|sigmoid|gelu|relu)\\s*\\(\\s*(?:b|x2|gate)\\s*\\)",
+        "\\b(?:silu|swish|sigmoid|gelu|relu)\\s*\\(\\s*(?:b|x2|gate)\\s*\\)\\s*\\*\\s*(?:a|x1|up|value)",
+        "\\b(?:gate|gating)\\b[^\\n]{0,120}\\b(?:silu|swish|sigmoid|gelu|relu)\\b",
+        "\\b(?:chunk|split)\\s*\\([^\\)]*\\b2\\b[^\\)]*\\)[^\\n]{0,160}\\b(?:sigmoid|silu|swish|gelu|relu)\\b[^\\n]{0,100}\\*",
+        "\\b(?:glu|gated[_ ]?linear[_ ]?unit)\\b[^\\n]{0,160}\\b(?:sigmoid|silu|swish|gelu|relu)\\b",
+        "\\bsoftplus\\s*\\([^\\)]*\\)[^\\n]{0,80}\\btanh\\b|\\btanh\\s*\\(\\s*softplus\\s*\\("
+      ]
+    },
+    {
+      "family": "elementwise",
+      "priority": 130,
+      "examples_from_pp": [
+        "relu",
+        "sigmoid",
+        "tanh",
+        "exp",
+        "log",
+        "sqrt"
+      ],
+      "operator_patterns": [
+        "\\b(?:relu|sigmoid|tanh|exp|log|sqrt|rsqrt|abs|neg|sin|cos|tan|asin|acos|atan|floor|ceil|round|trunc|clamp|where)\\s*\\(",
+        "\\b(?:add|sub|mul|div|pow|maximum|minimum|fmod|remainder|logical_and|logical_or|logical_not)\\s*\\(",
+        "\\b(?:aten::(?:relu|sigmoid|tanh|exp|log|sqrt|rsqrt|abs|neg|sin|cos|floor|ceil|round|clamp|where|add|sub|mul|div|pow|maximum|minimum))\\b"
+      ],
+      "formula_patterns": [
+        "\\b(?:relu|sigmoid|tanh|exp|log|sqrt|rsqrt|abs|neg|sin|cos|tan|asin|acos|atan|floor|ceil|round|trunc|clamp|where)\\s*\\(",
+        "\\b(?:add|sub|mul|div|pow|maximum|minimum|fmod|remainder|logical_and|logical_or|logical_not)\\s*\\(",
+        "\\b(?:x|a|input|lhs)\\s*(?:\\+|-|\\*|/|\\*\\*|\\^|%|==|!=|<=|>=|<|>)\\s*(?:y|b|other|rhs|scalar|\\d+(?:\\.\\d+)?)\\b",
+        "\\b(?:broadcast|pointwise|elementwise|per[_ -]?element)\\b",
+        "\\by_i\\s*=\\s*f\\s*\\(\\s*x_i\\s*\\)",
+        "\\by\\s*\\[\\s*i\\s*\\]\\s*=\\s*[^\\n]{0,80}\\bx\\s*\\[\\s*i\\s*\\]",
+        "\\b(?:max\\s*\\(\\s*(?:x|a|input)\\s*,\\s*(?:y|b|other|0)|min\\s*\\(\\s*(?:x|a|input)\\s*,\\s*(?:y|b|other|0))",
+        "\\bwhere\\s*\\(\\s*(?:condition|mask|cond)[^\\)]*\\)",
+        "\\b(?:clip|clamp)\\s*\\([^\\)]*(?:min|max|lower|upper)[^\\)]*\\)",
+        "\\b(?:unary|binary)\\b[^\\n]{0,80}\\b(?:pointwise|elementwise)\\b"
+      ]
+    }
+  ]
+}

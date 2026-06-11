@@ -71,7 +71,7 @@ Transforms a rough draft document into a structured implementation plan with:
 After each round, write the required summary and stop/exit normally. Humanize's native Codex `Stop` hook handles review gating automatically.
 
 **Common Options:**
-- `--max N` - Maximum iterations before auto-stop (default: 42)
+- `--max N` - Maximum iterations before auto-stop (default: 84)
 - `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.5:high)
 - Review phase `codex review` uses `gpt-5.5:high`
 - `--codex-timeout SECONDS` - Timeout for each Codex review (default: 5400)
@@ -84,7 +84,9 @@ After each round, write the required summary and stop/exit normally. Humanize's 
 - `--agent-teams` - Enable Agent Teams mode
 - `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
 - `--skip-quiz` - Skip the Plan Understanding Quiz only
-- `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
+- `--privacy` - No-op; methodology analysis is disabled by default
+- `--no-privacy` - Enable methodology analysis at loop exit
+- `--strict-success` - Continue past max-iteration and stagnation STOP gates until the acceptance criteria are actually met
 
 ### Cancel RLCR Loop
 

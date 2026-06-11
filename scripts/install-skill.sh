@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Install/upgrade Humanize skills for Kimi and/or Codex.
+# Install/upgrade KernelPilot Humanize skills for Kimi and/or Codex.
 #
 # What this does:
-# 1) Sync skills/{humanize,humanize-gen-plan,humanize-rlcr} to target skills dir(s)
+# 1) Sync skills/{humanize,humanize-gen-plan,humanize-rlcr,...} to target skills dir(s)
 # 2) Copy runtime dependencies into <skills-dir>/humanize/{scripts,hooks,prompt-template}
-# 3) Hydrate SKILL.md command paths with concrete runtime root paths
+# 3) Sync KernelWiki / ncu-report-skill into the target skills dir
+# 4) Hydrate SKILL.md command paths with concrete runtime root paths
 #
 # Usage:
 #   ./scripts/install-skill.sh [options]
@@ -17,6 +18,10 @@
 #   --kimi-skills-dir PATH  Kimi skills dir (default: ~/.config/agents/skills)
 #   --codex-skills-dir PATH Codex skills dir (default: ${CODEX_HOME:-~/.codex}/skills)
 #   --codex-config-dir PATH Codex config dir for hooks/config.toml (default: ${CODEX_HOME:-~/.codex})
+#   --kernelpilot-root PATH KernelPilot checkout root (default: auto-detect)
+#   --kernelwiki-root PATH  KernelWiki checkout used by kernel-agent skill (default: external/KernelWiki)
+#   --ncu-report-skill-root PATH
+#                            ncu-report-skill checkout used by kernel-agent skill (default: external/ncu-report-skill)
 #   --dry-run               Print actions without writing
 #   -h, --help              Show help
 #
@@ -35,17 +40,23 @@ HUMANIZE_USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/humanize"
 COMMAND_BIN_DIR="${HUMANIZE_COMMAND_BIN_DIR:-${HOME}/.local/bin}"
 LEGACY_SKILLS_DIR=""
 DRY_RUN="false"
+KERNELPILOT_ROOT="${KERNELPILOT_ROOT:-}"
+KERNELWIKI_ROOT="${KERNELWIKI_ROOT:-}"
+NCU_REPORT_SKILL_ROOT="${NCU_REPORT_SKILL_ROOT:-}"
 
 SKILL_NAMES=(
     "humanize"
     "humanize-gen-plan"
     "humanize-refine-plan"
     "humanize-rlcr"
+    "humanize-kernel-agent-loop"
 )
+KERNELWIKI_SKILL_NAME="KernelWiki"
+NCU_REPORT_SKILL_NAME="ncu-report-skill"
 
 usage() {
     cat <<'EOF'
-Install Humanize skills for Kimi and/or Codex.
+Install KernelPilot Humanize skills for Kimi and/or Codex.
 
 Usage:
   scripts/install-skill.sh [options]
@@ -58,6 +69,10 @@ Options:
   --codex-skills-dir PATH Codex skills dir (default: ${CODEX_HOME:-~/.codex}/skills)
   --codex-config-dir PATH Codex config dir for hooks/config.toml (default: ${CODEX_HOME:-~/.codex})
   --command-bin-dir PATH  Install helper command shims here (default: ~/.local/bin)
+  --kernelpilot-root PATH KernelPilot checkout root (default: auto-detect)
+  --kernelwiki-root PATH  KernelWiki checkout used by kernel-agent skill (default: external/KernelWiki)
+  --ncu-report-skill-root PATH
+                           ncu-report-skill checkout used by kernel-agent skill (default: external/ncu-report-skill)
   --dry-run               Print actions without writing
   -h, --help              Show help
 EOF
@@ -117,6 +132,70 @@ resolve_source_layout() {
     die "could not resolve Humanize source layout from: $candidate_root"
 }
 
+resolve_kernelpilot_root() {
+    if [[ -n "$KERNELPILOT_ROOT" ]]; then
+        KERNELPILOT_ROOT="$(cd "$KERNELPILOT_ROOT" 2>/dev/null && pwd || true)"
+        return 0
+    fi
+
+    local candidate
+    candidate="$(cd "$REPO_ROOT/.." 2>/dev/null && pwd || true)"
+    if [[ -n "$candidate" && -f "$candidate/.claude-plugin/marketplace.json" ]]; then
+        KERNELPILOT_ROOT="$candidate"
+    fi
+}
+
+resolve_kernelwiki_root() {
+    if [[ -n "$KERNELWIKI_ROOT" ]]; then
+        KERNELWIKI_ROOT="$(cd "$KERNELWIKI_ROOT" 2>/dev/null && pwd || true)"
+        return 0
+    fi
+
+    local candidate
+    for candidate in \
+        "$KERNELPILOT_ROOT/external/KernelWiki" \
+        "$REPO_ROOT/../external/KernelWiki" \
+        "$REPO_ROOT/../../KernelWiki"; do
+        if [[ -n "$candidate" && -f "$candidate/SKILL.md" && -f "$candidate/scripts/query.py" ]]; then
+            KERNELWIKI_ROOT="$(cd "$candidate" && pwd)"
+            return 0
+        fi
+    done
+}
+
+resolve_ncu_report_skill_root() {
+    if [[ -n "$NCU_REPORT_SKILL_ROOT" ]]; then
+        NCU_REPORT_SKILL_ROOT="$(cd "$NCU_REPORT_SKILL_ROOT" 2>/dev/null && pwd || true)"
+        return 0
+    fi
+
+    local candidate
+    for candidate in \
+        "$KERNELPILOT_ROOT/external/ncu-report-skill" \
+        "$REPO_ROOT/../external/ncu-report-skill" \
+        "$REPO_ROOT/../../kernel-design-agents/skills/ncu-report-skill"; do
+        if [[ -n "$candidate" && -f "$candidate/SKILL.md" && -d "$candidate/reference" ]]; then
+            NCU_REPORT_SKILL_ROOT="$(cd "$candidate" && pwd)"
+            return 0
+        fi
+    done
+}
+
+validate_external_skill_roots() {
+    [[ -n "$KERNELPILOT_ROOT" ]] || die "KernelPilot root not found; run from the kernel-pilot/humanize checkout or pass --kernelpilot-root PATH"
+    [[ -d "$KERNELPILOT_ROOT" ]] || die "KernelPilot root is not a directory: $KERNELPILOT_ROOT"
+    [[ -n "$KERNELWIKI_ROOT" ]] || die "KernelWiki root not found; pass --kernelwiki-root PATH or initialize external/KernelWiki"
+    [[ -d "$KERNELWIKI_ROOT" ]] || die "KernelWiki root is not a directory: $KERNELWIKI_ROOT"
+    [[ -f "$KERNELWIKI_ROOT/SKILL.md" ]] || die "KernelWiki skill not found: $KERNELWIKI_ROOT/SKILL.md"
+    [[ -f "$KERNELWIKI_ROOT/scripts/query.py" ]] || die "KernelWiki query script not found: $KERNELWIKI_ROOT/scripts/query.py"
+    [[ -d "$KERNELWIKI_ROOT/sources/prs" ]] || die "KernelWiki PR pages not found: $KERNELWIKI_ROOT/sources/prs"
+    [[ -n "$NCU_REPORT_SKILL_ROOT" ]] || die "ncu-report-skill root not found; pass --ncu-report-skill-root PATH or initialize external/ncu-report-skill"
+    [[ -d "$NCU_REPORT_SKILL_ROOT" ]] || die "ncu-report-skill root is not a directory: $NCU_REPORT_SKILL_ROOT"
+    [[ -f "$NCU_REPORT_SKILL_ROOT/SKILL.md" ]] || die "ncu-report-skill not found: $NCU_REPORT_SKILL_ROOT/SKILL.md"
+    [[ -d "$NCU_REPORT_SKILL_ROOT/reference" ]] || die "ncu-report-skill reference docs not found: $NCU_REPORT_SKILL_ROOT/reference"
+    [[ -d "$NCU_REPORT_SKILL_ROOT/helpers" ]] || die "ncu-report-skill helpers not found: $NCU_REPORT_SKILL_ROOT/helpers"
+}
+
 sync_dir() {
     local src="$1"
     local dst="$2"
@@ -128,13 +207,14 @@ sync_dir() {
 
     mkdir -p "$dst"
     if command -v rsync >/dev/null 2>&1; then
-        rsync -a --delete "$src/" "$dst/"
+        rsync -a --delete --exclude '.git' "$src/" "$dst/"
     else
         # Copy to a temp sibling first so the destination is not destroyed
         # if cp fails partway through (disk full, permission error, etc.).
         local tmp_dst
         tmp_dst="$(mktemp -d "$(dirname "$dst")/.sync_tmp.XXXXXX")"
         if cp -a "$src/." "$tmp_dst/"; then
+            rm -rf "$tmp_dst/.git"
             rm -rf "$dst"
             mv "$tmp_dst" "$dst"
         else
@@ -144,12 +224,52 @@ sync_dir() {
     fi
 }
 
+canonical_path_for_compare() {
+    local path="$1"
+    local dir base
+
+    if [[ -e "$path" ]]; then
+        realpath "$path" 2>/dev/null && return
+    fi
+
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    if [[ -d "$dir" ]]; then
+        printf '%s/%s\n' "$(cd "$dir" && pwd -P)" "$base"
+        return
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$path" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(os.path.abspath(sys.argv[1])))
+PY
+        return
+    fi
+
+    printf '%s\n' "$path"
+}
+
 sync_one_skill() {
     local skill="$1"
     local target_dir="$2"
     local src="$SKILLS_SOURCE_ROOT/$skill"
     local dst="$target_dir/$skill"
     sync_dir "$src" "$dst"
+}
+
+sync_kernelwiki_skill() {
+    local target_dir="$1"
+    local dst="$target_dir/$KERNELWIKI_SKILL_NAME"
+    sync_dir "$KERNELWIKI_ROOT" "$dst"
+}
+
+sync_ncu_report_skill() {
+    local target_dir="$1"
+    local dst="$target_dir/$NCU_REPORT_SKILL_NAME"
+    sync_dir "$NCU_REPORT_SKILL_ROOT" "$dst"
 }
 
 install_runtime_bundle() {
@@ -172,22 +292,32 @@ hydrate_skill_runtime_root() {
     local tmp
 
     for skill in "${SKILL_NAMES[@]}"; do
-        skill_file="$target_dir/$skill/SKILL.md"
-        [[ -f "$skill_file" ]] || continue
+        for skill_file in "$target_dir/$skill"/SKILL*.md; do
+            [[ -f "$skill_file" ]] || continue
 
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log "DRY-RUN hydrate runtime root in $skill_file"
-            continue
-        fi
+            if [[ "$DRY_RUN" == "true" ]]; then
+                log "DRY-RUN hydrate runtime root in $skill_file"
+                continue
+            fi
 
-        tmp="$(mktemp)"
-        # Use ENVIRON to pass the runtime root to awk instead of -v, which
-        # interprets backslash escape sequences (e.g. \n -> newline).
-        # ENVIRON passes the value verbatim.
-        _HYDRATE_RUNTIME_ROOT="$runtime_root" \
-            awk '{gsub(/\{\{HUMANIZE_RUNTIME_ROOT\}\}/, ENVIRON["_HYDRATE_RUNTIME_ROOT"]); print}' "$skill_file" > "$tmp" \
-            || { rm -f "$tmp"; die "failed to hydrate $skill_file"; }
-        mv "$tmp" "$skill_file"
+            tmp="$(mktemp)"
+            # Use ENVIRON to pass the runtime root to awk instead of -v, which
+            # interprets backslash escape sequences (e.g. \n -> newline).
+            # ENVIRON passes the value verbatim.
+            _HYDRATE_RUNTIME_ROOT="$runtime_root" \
+            _HYDRATE_KERNELPILOT_ROOT="$KERNELPILOT_ROOT" \
+            _HYDRATE_KERNELWIKI_ROOT="$KERNELWIKI_ROOT" \
+            _HYDRATE_NCU_REPORT_SKILL_ROOT="$NCU_REPORT_SKILL_ROOT" \
+                awk '{
+                    gsub(/\{\{HUMANIZE_RUNTIME_ROOT\}\}/, ENVIRON["_HYDRATE_RUNTIME_ROOT"]);
+                    gsub(/\{\{KERNELPILOT_ROOT\}\}/, ENVIRON["_HYDRATE_KERNELPILOT_ROOT"]);
+                    gsub(/\{\{KERNELWIKI_ROOT\}\}/, ENVIRON["_HYDRATE_KERNELWIKI_ROOT"]);
+                    gsub(/\{\{NCU_REPORT_SKILL_ROOT\}\}/, ENVIRON["_HYDRATE_NCU_REPORT_SKILL_ROOT"]);
+                    print
+                }' "$skill_file" > "$tmp" \
+                || { rm -f "$tmp"; die "failed to hydrate $skill_file"; }
+            mv "$tmp" "$skill_file"
+        done
     done
 }
 
@@ -245,6 +375,10 @@ sync_target() {
         log "syncing [$label] skill: $skill"
         sync_one_skill "$skill" "$target_dir"
     done
+    log "syncing [$label] skill: $KERNELWIKI_SKILL_NAME"
+    sync_kernelwiki_skill "$target_dir"
+    log "syncing [$label] skill: $NCU_REPORT_SKILL_NAME"
+    sync_ncu_report_skill "$target_dir"
     install_runtime_bundle "$target_dir"
     hydrate_skill_runtime_root "$target_dir"
     strip_claude_specific_frontmatter "$target_dir"
@@ -273,8 +407,6 @@ install_codex_user_config() {
     local user_config_file="$user_config_dir/config.json"
     local default_config_file="$runtime_root/config/default_config.json"
 
-    [[ -f "$default_config_file" ]] || die "missing default config: $default_config_file"
-
     if ! command -v python3 >/dev/null 2>&1; then
         die "python3 is required to update Humanize user config for Codex installs"
     fi
@@ -283,6 +415,8 @@ install_codex_user_config() {
         log "DRY-RUN seed Codex-friendly BitLesson config in $user_config_file"
         return
     fi
+
+    [[ -f "$default_config_file" ]] || die "missing default config: $default_config_file"
 
     mkdir -p "$user_config_dir"
 
@@ -379,13 +513,33 @@ EOF
     log "installed bitlesson-selector shim into: $shim_path"
 }
 
+overwrite_kimi_rlcr_skill() {
+    local target_dir="$1"
+    local kimi_src="$SKILLS_SOURCE_ROOT/humanize-rlcr/SKILL-kimi.md"
+    local skill_file="$target_dir/humanize-rlcr/SKILL.md"
+    local runtime_root="$target_dir/humanize"
+
+    [[ -f "$kimi_src" ]] || die "missing Kimi RLCR skill source: $kimi_src"
+    [[ "$DRY_RUN" == "true" ]] && { log "DRY-RUN overwrite Kimi RLCR skill"; return; }
+
+    local tmp
+    tmp="$(mktemp)"
+    _HYDRATE_RUNTIME_ROOT="$runtime_root" \
+        awk '{gsub(/\{\{HUMANIZE_RUNTIME_ROOT\}\}/, ENVIRON["_HYDRATE_RUNTIME_ROOT"]); print}' \
+        "$kimi_src" > "$tmp" \
+        || { rm -f "$tmp"; die "failed to hydrate Kimi RLCR skill"; }
+    mv "$tmp" "$skill_file"
+    log "installed Kimi-specific humanize-rlcr SKILL.md (gate-based)"
+}
+
 install_kimi_target() {
     sync_target "kimi" "$KIMI_SKILLS_DIR"
+    overwrite_kimi_rlcr_skill "$KIMI_SKILLS_DIR"
 }
 
 install_codex_target() {
     sync_target "codex" "$CODEX_SKILLS_DIR"
-    install_codex_user_config "$CODEX_SKILLS_DIR/humanize" "$TARGET"
+    install_codex_user_config "$CODEX_SKILLS_DIR/humanize" "codex"
     install_codex_native_hooks "$CODEX_SKILLS_DIR"
 }
 
@@ -429,6 +583,21 @@ while [[ $# -gt 0 ]]; do
             COMMAND_BIN_DIR="$2"
             shift 2
             ;;
+        --kernelpilot-root)
+            [[ -n "${2:-}" ]] || die "--kernelpilot-root requires a value"
+            KERNELPILOT_ROOT="$2"
+            shift 2
+            ;;
+        --kernelwiki-root)
+            [[ -n "${2:-}" ]] || die "--kernelwiki-root requires a value"
+            KERNELWIKI_ROOT="$2"
+            shift 2
+            ;;
+        --ncu-report-skill-root)
+            [[ -n "${2:-}" ]] || die "--ncu-report-skill-root requires a value"
+            NCU_REPORT_SKILL_ROOT="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN="true"
             shift
@@ -444,6 +613,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_source_layout "$REPO_ROOT"
+resolve_kernelpilot_root
+resolve_kernelwiki_root
+resolve_ncu_report_skill_root
+validate_external_skill_roots
 validate_repo
 
 if [[ -n "$LEGACY_SKILLS_DIR" ]]; then
@@ -457,8 +630,19 @@ if [[ -n "$LEGACY_SKILLS_DIR" ]]; then
     esac
 fi
 
+if [[ "$TARGET" == "both" ]]; then
+    _kimi_real="$(canonical_path_for_compare "$KIMI_SKILLS_DIR")"
+    _codex_real="$(canonical_path_for_compare "$CODEX_SKILLS_DIR")"
+    if [[ "$_kimi_real" == "$_codex_real" ]]; then
+        die "--target both requires distinct kimi and codex skills dirs; both resolved to: $_kimi_real (use --kimi-skills-dir and --codex-skills-dir to set separate paths)"
+    fi
+fi
+
 log "repo root: $REPO_ROOT"
 log "target: $TARGET"
+log "kernelpilot root: $KERNELPILOT_ROOT"
+log "kernelwiki root: $KERNELWIKI_ROOT"
+log "ncu-report-skill root: $NCU_REPORT_SKILL_ROOT"
 if [[ "$TARGET" == "kimi" || "$TARGET" == "both" ]]; then
     log "kimi skills dir: $KIMI_SKILLS_DIR"
 fi
