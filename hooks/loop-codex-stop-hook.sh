@@ -27,6 +27,13 @@ DEFAULT_CODEX_TIMEOUT=5400
 
 HOOK_INPUT=$(cat)
 
+# Codex reviews launched by this hook can themselves trigger Stop hooks in Codex.
+# Treat those nested hook invocations as internal review plumbing; otherwise the
+# reviewer recursively launches another reviewer and the RLCR loop never advances.
+if [[ "${HUMANIZE_INSIDE_CODEX_REVIEW:-}" == "1" ]]; then
+    exit 0
+fi
+
 # NOTE: We intentionally do NOT check stop_hook_active here.
 # For iterative loops, stop_hook_active will be true when Claude is continuing
 # from a previous blocked stop. We WANT to run Codex review each iteration.
@@ -1308,7 +1315,7 @@ Provider: codex
     echo "Running codex review with timeout ${CODEX_TIMEOUT}s in $PROJECT_ROOT (base: $review_base)..." >&2
 
     CODEX_REVIEW_EXIT_CODE=0
-    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
+    (cd "$PROJECT_ROOT" && HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
         > "$CODEX_REVIEW_LOG_FILE" 2>&1 || CODEX_REVIEW_EXIT_CODE=$?
 
     echo "Code review exit code: $CODEX_REVIEW_EXIT_CODE" >&2
@@ -1737,7 +1744,7 @@ echo "Codex command saved to: $CODEX_CMD_FILE" >&2
 echo "Running summary review with timeout ${CODEX_TIMEOUT}s..." >&2
 
 CODEX_EXIT_CODE=0
-printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
+printf '%s' "$CODEX_PROMPT_CONTENT" | HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
     > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
 
 echo "Codex exit code: $CODEX_EXIT_CODE" >&2
