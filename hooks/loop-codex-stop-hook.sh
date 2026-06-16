@@ -821,12 +821,46 @@ Please write your work summary to: {{SUMMARY_FILE}}"
     exit 0
 fi
 
+# Check Round Contract Exists
+# ========================================
+
+# Only enforce round contract when anti-drift is active (drift_status present in raw state).
+# Legacy loops that pre-date the anti-drift feature will not have this field.
+RAW_DRIFT_STATUS=$(echo "$RAW_FRONTMATTER" | grep "^drift_status:" || true)
+if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ -n "$RAW_DRIFT_STATUS" ]]; then
+    if [[ ! -f "$ROUND_CONTRACT_FILE" ]]; then
+        FALLBACK="# Round Contract Missing
+
+Before trying to exit, write the current round contract to: {{ROUND_CONTRACT_FILE}}
+
+The round contract must restate:
+- The single mainline objective for this round
+- The target ACs
+- Which side issues are truly blocking
+- Which side issues are queued and out of scope
+- The success criteria for this round"
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/round-contract-missing.md" "$FALLBACK" \
+            "ROUND_CONTRACT_FILE=$ROUND_CONTRACT_FILE")
+
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Round contract missing for round $CURRENT_ROUND" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+fi
+
 # Check Summary File Is Not Still the Scaffold
 # ============================================
 # Round summary files are pre-created as editing targets. A file existing is
-# therefore not proof that Claude actually summarized completed work. Block the
-# common contract-only failure mode before spending a Codex review when the
-# summary still contains template placeholders.
+# therefore not proof that Claude actually summarized completed work. After the
+# anti-drift contract precondition is satisfied, block the common contract-only
+# failure mode before spending a Codex review when the summary still contains
+# template placeholders.
 if [[ "$IS_FINALIZE_PHASE" != "true" ]]; then
     SUMMARY_PLACEHOLDERS=$(awk '
         BEGIN { in_fence = 0 }
@@ -856,39 +890,6 @@ Summary file: {{SUMMARY_FILE}}"
         jq -n \
             --arg reason "$REASON" \
             --arg msg "Loop: Summary file still contains placeholders for round $CURRENT_ROUND" \
-            '{
-                "decision": "block",
-                "reason": $reason,
-                "systemMessage": $msg
-            }'
-        exit 0
-    fi
-fi
-
-# Check Round Contract Exists
-# ========================================
-
-# Only enforce round contract when anti-drift is active (drift_status present in raw state).
-# Legacy loops that pre-date the anti-drift feature will not have this field.
-RAW_DRIFT_STATUS=$(echo "$RAW_FRONTMATTER" | grep "^drift_status:" || true)
-if [[ "$IS_FINALIZE_PHASE" != "true" ]] && [[ -n "$RAW_DRIFT_STATUS" ]]; then
-    if [[ ! -f "$ROUND_CONTRACT_FILE" ]]; then
-        FALLBACK="# Round Contract Missing
-
-Before trying to exit, write the current round contract to: {{ROUND_CONTRACT_FILE}}
-
-The round contract must restate:
-- The single mainline objective for this round
-- The target ACs
-- Which side issues are truly blocking
-- Which side issues are queued and out of scope
-- The success criteria for this round"
-        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/round-contract-missing.md" "$FALLBACK" \
-            "ROUND_CONTRACT_FILE=$ROUND_CONTRACT_FILE")
-
-        jq -n \
-            --arg reason "$REASON" \
-            --arg msg "Loop: Round contract missing for round $CURRENT_ROUND" \
             '{
                 "decision": "block",
                 "reason": $reason,
