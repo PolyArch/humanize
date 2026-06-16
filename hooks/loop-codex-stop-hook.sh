@@ -821,6 +821,50 @@ Please write your work summary to: {{SUMMARY_FILE}}"
     exit 0
 fi
 
+# Check Summary File Is Not Still the Scaffold
+# ============================================
+# Round summary files are pre-created as editing targets. A file existing is
+# therefore not proof that Claude actually summarized completed work. Block the
+# common contract-only failure mode before spending a Codex review when the
+# summary still contains template placeholders.
+if [[ "$IS_FINALIZE_PHASE" != "true" ]]; then
+    SUMMARY_PLACEHOLDERS=$(awk '
+        BEGIN { in_fence = 0 }
+        /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence; next }
+        in_fence { next }
+        /^[[:space:]]*(-[[:space:]]*)?\[(Describe what was (done|implemented in this phase)|List (files created\/modified\/deleted|created\/modified files|tests\/commands run and outcomes|any deferred or pending items|unresolved items, if any))\][[:space:]]*$/ { print FNR ":" $0; next }
+        /^[[:space:]]*(-[[:space:]]*)?Action:[[:space:]]*none\|add\|update[[:space:]]*$/ { print FNR ":" $0; next }
+        /^[[:space:]]*(-[[:space:]]*)?Notes:[[:space:]]*\[what changed and why\][[:space:]]*$/ { print FNR ":" $0; next }
+    ' "$SUMMARY_FILE" 2>/dev/null || true)
+    if [[ -n "$SUMMARY_PLACEHOLDERS" ]]; then
+        FALLBACK="# Work Summary Still Placeholder
+
+The summary file exists but still contains scaffold placeholder text:
+
+{{PLACEHOLDER_LINES}}
+
+Writing the round contract is only step 0; it is not implementation progress.
+Before exiting, complete at least one non-queued mainline/blocking task and
+replace the summary with concrete work, changed files, validation, and remaining
+items.
+
+Summary file: {{SUMMARY_FILE}}"
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/work-summary-placeholder.md" "$FALLBACK" \
+            "SUMMARY_FILE=$SUMMARY_FILE" \
+            "PLACEHOLDER_LINES=$SUMMARY_PLACEHOLDERS")
+
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Summary file still contains placeholders for round $CURRENT_ROUND" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+fi
+
 # Check Round Contract Exists
 # ========================================
 
