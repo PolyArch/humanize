@@ -25,14 +25,14 @@ DEFAULT_CODEX_TIMEOUT=5400
 # Read Hook Input
 # ========================================
 
-HOOK_INPUT=$(cat)
-
 # Codex reviews launched by this hook can themselves trigger Stop hooks in Codex.
 # Treat those nested hook invocations as internal review plumbing; otherwise the
 # reviewer recursively launches another reviewer and the RLCR loop never advances.
 if [[ "${HUMANIZE_INSIDE_CODEX_REVIEW:-}" == "1" ]]; then
     exit 0
 fi
+
+HOOK_INPUT=$(cat)
 
 # NOTE: We intentionally do NOT check stop_hook_active here.
 # For iterative loops, stop_hook_active will be true when Claude is continuing
@@ -1744,8 +1744,8 @@ echo "Codex command saved to: $CODEX_CMD_FILE" >&2
 echo "Running summary review with timeout ${CODEX_TIMEOUT}s..." >&2
 
 CODEX_EXIT_CODE=0
-printf '%s' "$CODEX_PROMPT_CONTENT" | HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
-    > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
+HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
+    < "$REVIEW_PROMPT_FILE" > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
 
 echo "Codex exit code: $CODEX_EXIT_CODE" >&2
 echo "Codex stdout saved to: $CODEX_STDOUT_FILE" >&2
