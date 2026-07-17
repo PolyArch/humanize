@@ -329,7 +329,7 @@ Current built-in keys:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `codex_model` | `gpt-5.5` | Shared default model for Codex-backed review and analysis |
-| `codex_effort` | `high` | Shared default reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `codex_effort` | `high` | Shared default reasoning effort (`max`, `xhigh`, `high`, `medium`, `low`) |
 | `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
 | `provider_mode` | unset | Optional runtime mode hint such as `codex-only` |
 | `agent_teams` | `false` | Project-level default for agent teams workflow |
@@ -343,7 +343,7 @@ All Codex-using features (RLCR loop, ask-codex) share the same model configurati
 | Key | Default | Description |
 |-----|---------|-------------|
 | `codex_model` | `gpt-5.5` | Model used for Codex operations (reviews, analysis, queries) |
-| `codex_effort` | `high` | Reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `codex_effort` | `high` | Reasoning effort (`max`, `xhigh`, `high`, `medium`, `low`) |
 
 To override, add to `.humanize/config.json`:
 

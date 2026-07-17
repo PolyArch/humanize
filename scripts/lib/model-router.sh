@@ -73,16 +73,16 @@ map_effort() {
     esac
 
     case "$effort" in
-        xhigh|high|medium|low)
+        max|xhigh|high|medium|low)
             ;;
         *)
-            echo "Error: Unknown effort '$effort'. Expected one of: xhigh, high, medium, low." >&2
+            echo "Error: Unknown effort '$effort'. Expected one of: max, xhigh, high, medium, low." >&2
             return 1
             ;;
     esac
 
-    if [[ "$target_provider" == "claude" ]] && [[ "$effort" == "xhigh" ]]; then
-        echo "Info: Mapping effort 'xhigh' to 'high' for provider 'claude'." >&2
+    if [[ "$target_provider" == "claude" ]] && [[ "$effort" =~ ^(xhigh|max)$ ]]; then
+        echo "Info: Mapping effort '$effort' to 'high' for provider 'claude'." >&2
         echo "high"
         return 0
     fi

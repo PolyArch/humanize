@@ -719,9 +719,9 @@ if [[ ! "$CODEX_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
 fi
 
 # Validate codex effort matches allowed values (consistent with stop-hook validation)
-if [[ ! "$CODEX_EFFORT" =~ ^(xhigh|high|medium|low)$ ]]; then
+if [[ ! "$CODEX_EFFORT" =~ ^(max|xhigh|high|medium|low)$ ]]; then
     echo "Error: Invalid codex effort: $CODEX_EFFORT" >&2
-    echo "  Must be one of: xhigh, high, medium, low" >&2
+    echo "  Must be one of: max, xhigh, high, medium, low" >&2
     exit 1
 fi
 
