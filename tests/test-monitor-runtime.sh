@@ -109,25 +109,25 @@ chmod +x test_graceful_stop.sh
 output=$(./test_graceful_stop.sh "$TEST_BASE" "$PROJECT_ROOT" 2>&1)
 
 # Verify the output contains expected messages
-if echo "$output" | grep -q "RESTORE_TERMINAL_CALLED"; then
+if grep -q "RESTORE_TERMINAL_CALLED" <<< "$output"; then
     pass "_restore_terminal was called"
 else
     fail "_restore_terminal call" "Function not called"
 fi
 
-if echo "$output" | grep -q "CLEANUP_CALLED"; then
+if grep -q "CLEANUP_CALLED" <<< "$output"; then
     pass "_cleanup was called"
 else
     fail "_cleanup call" "Function not called"
 fi
 
-if echo "$output" | grep -q "Monitoring stopped:"; then
+if grep -q "Monitoring stopped:" <<< "$output"; then
     pass "Graceful stop message displayed"
 else
     fail "Graceful stop message" "Message not found"
 fi
 
-if echo "$output" | grep -q "directory no longer exists"; then
+if grep -q "directory no longer exists" <<< "$output"; then
     pass "User-friendly reason in message"
 else
     fail "User-friendly reason" "Reason not in message"
@@ -170,7 +170,7 @@ TESTSCRIPT
 chmod +x test_double_cleanup.sh
 output=$(./test_double_cleanup.sh 2>&1)
 
-if echo "$output" | grep -q "FINAL_COUNT: 1"; then
+if grep -q "FINAL_COUNT: 1" <<< "$output"; then
     pass "Cleanup only executed once (idempotent)"
 else
     fail "Idempotent cleanup" "Cleanup executed multiple times"
@@ -232,19 +232,19 @@ TESTSCRIPT
 chmod +x test_loop_detection.sh
 output=$(./test_loop_detection.sh "$TEST_BASE" 2>&1)
 
-if echo "$output" | grep -q "CONTINUING"; then
+if grep -q "CONTINUING" <<< "$output"; then
     pass "Monitor continues while directory exists"
 else
     fail "Directory existence check" "Stopped while directory exists"
 fi
 
-if echo "$output" | grep -q "STOPPED_AFTER_DELETE"; then
+if grep -q "STOPPED_AFTER_DELETE" <<< "$output"; then
     pass "Monitor detects deletion and stops gracefully"
 else
     fail "Deletion detection" "Did not stop after deletion"
 fi
 
-if echo "$output" | grep -q "GRACEFUL_STOP"; then
+if grep -q "GRACEFUL_STOP" <<< "$output"; then
     pass "Graceful stop triggered on deletion"
 else
     fail "Graceful stop trigger" "Not triggered"
@@ -290,13 +290,13 @@ TESTSCRIPT
 chmod +x test_terminal_restore.sh
 output=$(./test_terminal_restore.sh "$TEST_BASE" "$PROJECT_ROOT" 2>&1)
 
-if echo "$output" | grep -q "FUNCTION_DEFINED"; then
+if grep -q "FUNCTION_DEFINED" <<< "$output"; then
     pass "_restore_terminal function is defined"
 else
     fail "_restore_terminal definition" "Function not found"
 fi
 
-if echo "$output" | grep -q "SCROLL_REGION_RESET"; then
+if grep -q "SCROLL_REGION_RESET" <<< "$output"; then
     pass "_restore_terminal resets scroll region"
 else
     fail "Scroll region reset" "Reset command not found"
@@ -393,7 +393,7 @@ TESTSCRIPT
 chmod +x test_sigint_bash.sh
 output=$(./test_sigint_bash.sh 2>&1)
 
-if echo "$output" | grep -q "CLEANUP_BY_SIGINT"; then
+if grep -q "CLEANUP_BY_SIGINT" <<< "$output"; then
     pass "SIGINT triggers _cleanup in bash"
 else
     fail "SIGINT in bash" "Cleanup not triggered"
@@ -494,11 +494,11 @@ TESTSCRIPT
     # Run in subshell to prevent SIGINT propagation to parent
     output=$(bash -c 'trap "" INT; zsh test_sigint_zsh.zsh 2>&1' || true)
 
-    if echo "$output" | grep -q "CLEANUP_BY_SIGINT_ZSH"; then
+    if grep -q "CLEANUP_BY_SIGINT_ZSH" <<< "$output"; then
         pass "SIGINT triggers TRAPINT cleanup in zsh"
     else
         # zsh might handle signals differently, check if it at least ran
-        if echo "$output" | grep -q "ZSH_SIGINT_HANDLED"; then
+        if grep -q "ZSH_SIGINT_HANDLED" <<< "$output"; then
             pass "SIGINT triggers TRAPINT cleanup in zsh"
         else
             fail "SIGINT in zsh" "TRAPINT cleanup not triggered: $output"
