@@ -83,6 +83,7 @@ TEST_SUITES=(
     "test-gen-plan.sh"
     "test-refine-plan.sh"
     "test-task-tag-routing.sh"
+    "test-path-normalization.sh"
     "test-config-merge.sh"
     "test-config-error-handling.sh"
     "test-codex-hook-install.sh"

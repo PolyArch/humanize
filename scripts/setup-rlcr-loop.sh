@@ -534,7 +534,10 @@ RESOLVED_PLAN_DIR=$(cd "$PLAN_DIR" 2>/dev/null && pwd) || {
     echo "  This may indicate permission issues or broken symlinks in the path" >&2
     exit 1
 }
-REAL_PLAN_PATH="$RESOLVED_PLAN_DIR/$(basename "$FULL_PLAN_PATH")"
+# `pwd` already yields the POSIX spelling on MSYS, matching the normalized
+# PROJECT_ROOT. Normalize explicitly anyway so both sides of the comparison
+# below are guaranteed to speak one dialect regardless of shell.
+REAL_PLAN_PATH="$(to_posix_path "$RESOLVED_PLAN_DIR/$(basename "$FULL_PLAN_PATH")")"
 if [[ ! "$REAL_PLAN_PATH" = "$PROJECT_ROOT"/* ]]; then
     echo "Error: Plan file must be within project directory" >&2
     exit 1
