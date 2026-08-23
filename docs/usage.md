@@ -11,6 +11,12 @@ Humanize creates an iterative feedback loop with two phases:
 
 The loop continues until all acceptance criteria are met or no issues remain.
 
+Humanize also supports an optional reverse workflow, CGCR: Codex `/goal`
+implements while Claude Code monitors as a read-only reviewer. CGCR is separate
+from RLCR. Use `/humanize:cgcr` as the public command name. It delegates to
+`/flow:humanize-cgcr` for Codex-side two-tmux startup and to the lower-level
+`/humanize:monitor-codex-goal` monitor path for Claude-side monitoring.
+
 ## Begin with the End in Mind
 
 Before the RLCR loop starts any work, Humanize runs a **Plan Understanding Quiz** -- a brief pre-flight check that verifies you genuinely understand the plan you are about to execute.
@@ -64,6 +70,9 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 | `/gen-plan --input <draft.md> --output <plan.md>` | Generate structured plan from draft |
 | `/refine-plan --input <annotated-plan.md>` | Refine an annotated plan and generate a QA ledger |
 | `/ask-codex [question]` | One-shot consultation with Codex |
+| `/humanize:cgcr <task>` | Public CGCR command wrapper |
+| `/flow:humanize-cgcr <task>` | Codex-side launcher for CGCR with two tmux windows and prepared prompts |
+| `/humanize:monitor-codex-goal <session-id> <tmux-target>` | Claude Code command to monitor a Codex `/goal` tmux pane |
 
 ## Command Reference
 
@@ -252,6 +261,91 @@ for getting a second opinion, reviewing a design, or asking domain-specific ques
 
 Responses are saved to `.humanize/skill/<timestamp>/` with `input.md`, `output.md`,
 and `metadata.md` for reference.
+
+### humanize-cgcr
+
+Public CGCR command wrapper:
+
+```text
+/humanize:cgcr <long task prompt>
+```
+
+In Codex startup context, this delegates to:
+
+```text
+/flow:humanize-cgcr <long task prompt>
+```
+
+This starts the CGCR tmux topology, writes `.humanize/cgcr/<run-id>/`
+resources, starts a new Codex `/goal` window, and starts a separate Claude Code
+monitor window. Codex remains the only implementation agent. Claude Code remains
+read-only except for gated `[MONITOR]` tmux injection.
+
+In Claude monitoring context, `/humanize:cgcr` delegates to the lower-level
+`/humanize:monitor-codex-goal` behavior described below.
+
+### monitor-codex-goal
+
+Claude Code command, not a Codex command:
+
+```
+/humanize:monitor-codex-goal <codex-session-id> <tmux-target> [OPTIONS]
+
+OPTIONS:
+  --discover             List candidate Codex /goal sessions and tmux panes
+  --expect-goal <ID>     Require MONITOR_TARGET_ID to match exactly
+  --cadence <DURATION>   Periodic monitor cadence, such as 30m or 1h
+  --notify-only          Never auto-inject; notify or ask only
+  --manual-loop          Run exactly one tick and exit
+  --once, --no-cron      Aliases for --manual-loop
+  --budget <N>           Automatic injection risk tolerance (default: 0.1)
+  --principles <TEXT>    Extra monitor rules, such as "no fake data; no stubs"
+```
+
+This command is CGCR, not RLCR. Codex `/goal` is the executor. Claude Code is a
+read-only reviewer that may inspect Codex transcript, git status/diff/log, and
+the tmux pane. Claude must not edit files, run builds or tests, commit, reset,
+install packages, or drive implementation.
+
+CGCR expects a tmux topology: one tmux pane/window runs Codex `/goal`, and a
+separate tmux pane/window runs Claude Code with `/humanize:monitor-codex-goal`.
+If no verified tmux target is available, the monitor may observe transcript/git
+state but must not inject.
+
+Do not type `/humanize:monitor-codex-goal` into Codex. The Codex side uses
+`/goal`, `/flow:humanize-codex-goal`, or the launcher
+`/flow:humanize-cgcr`.
+
+CGCR is not a dual-executor system. If an approach would require Claude Code to
+mutate the repo or repair code directly, reject that approach and route feedback
+only through a gated `[MONITOR]` tmux prompt.
+
+Without `--manual-loop`, `--once`, or `--no-cron`, the monitor may use Claude
+Code's built-in `CronCreate` to schedule recurring ticks. The scheduled prompt
+must include `--once` or `--no-cron` to avoid recursive cron creation. Use
+`CronDelete` to stop a scheduled monitor by job id.
+
+Common examples:
+
+```text
+/humanize:cgcr --discover --notify-only
+```
+
+```text
+/humanize:cgcr <session-id> <tmux-target> \
+  --expect-goal <goal-id> \
+  --manual-loop \
+  --notify-only
+```
+
+```text
+/humanize:cgcr <session-id> <tmux-target> \
+  --expect-goal <goal-id> \
+  --cadence 30m \
+  --principles "no fake data; no stubs; do not broaden scope"
+```
+
+See [CGCR](cgcr.md).
 
 ## Configuration
 

@@ -88,6 +88,9 @@ TEST_SUITES=(
     "test-codex-hook-install.sh"
     "test-unified-codex-config.sh"
     "test-disable-nested-codex-hooks.sh"
+    "test-cgcr-workflow.sh"
+    "test-cgcr-setup.sh"
+    "test-cgcr-steer-hook.sh"
     # Session ID and Agent Teams tests
     "test-session-id.sh"
     "test-agent-teams.sh"
@@ -159,10 +162,16 @@ format_ms() {
     echo "${s}.${frac}s"
 }
 
+current_time_ms() {
+    echo $(( $(date +%s) * 1000 ))
+}
+
 # Launch all test suites in parallel
-declare -A PIDS          # suite -> PID
-declare -A SKIPPED       # suite -> reason
 ACTIVE_PIDS=()
+LAUNCHED_SUITES=()
+LAUNCHED_PIDS=()
+SKIPPED_SUITES=()
+SKIPPED_REASONS=()
 
 for suite in "${TEST_SUITES[@]}"; do
     suite_path="$SCRIPT_DIR/$suite"
@@ -172,31 +181,34 @@ for suite in "${TEST_SUITES[@]}"; do
     time_file="$OUTPUT_DIR/${safe_name}.time"
 
     if [[ ! -f "$suite_path" ]]; then
-        SKIPPED["$suite"]="not found"
+        SKIPPED_SUITES+=("$suite")
+        SKIPPED_REASONS+=("not found")
         continue
     fi
 
     if needs_zsh "$suite"; then
         if ! command -v zsh &>/dev/null; then
-            SKIPPED["$suite"]="zsh not available"
+            SKIPPED_SUITES+=("$suite")
+            SKIPPED_REASONS+=("zsh not available")
             continue
         fi
         (
-            t_start=$(date +%s%3N)
+            t_start=$(current_time_ms)
             zsh "$suite_path" >"$out_file" 2>&1
             echo $? >"$exit_file"
-            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+            echo $(( $(current_time_ms) - t_start )) >"$time_file"
         ) &
     else
         (
-            t_start=$(date +%s%3N)
+            t_start=$(current_time_ms)
             "$suite_path" >"$out_file" 2>&1
             echo $? >"$exit_file"
-            echo $(( $(date +%s%3N) - t_start )) >"$time_file"
+            echo $(( $(current_time_ms) - t_start )) >"$time_file"
         ) &
     fi
-    PIDS["$suite"]=$!
-    ACTIVE_PIDS+=("${PIDS[$suite]}")
+    LAUNCHED_SUITES+=("$suite")
+    LAUNCHED_PIDS+=("$!")
+    ACTIVE_PIDS+=("$!")
 
     # Throttle background jobs
     while [[ "${#ACTIVE_PIDS[@]}" -ge "$MAX_JOBS" ]]; do
@@ -227,10 +239,9 @@ SORT_FILE="$OUTPUT_DIR/sortable.txt"
 : > "$SORT_FILE"
 
 esc=$'\033'
-for suite in "${TEST_SUITES[@]}"; do
-    [[ -n "${SKIPPED[$suite]+x}" ]] && continue
-
-    pid="${PIDS[$suite]}"
+for idx in "${!LAUNCHED_SUITES[@]}"; do
+    suite="${LAUNCHED_SUITES[$idx]}"
+    pid="${LAUNCHED_PIDS[$idx]}"
     wait "$pid" 2>/dev/null
 
     safe_name="$(echo "$suite" | tr '/' '_')"
@@ -266,10 +277,8 @@ for suite in "${TEST_SUITES[@]}"; do
 done
 
 # Print skipped suites first
-for suite in "${TEST_SUITES[@]}"; do
-    if [[ -n "${SKIPPED[$suite]+x}" ]]; then
-        echo -e "${YELLOW}SKIP${NC}: $suite (${SKIPPED[$suite]})"
-    fi
+for idx in "${!SKIPPED_SUITES[@]}"; do
+    echo -e "${YELLOW}SKIP${NC}: ${SKIPPED_SUITES[$idx]} (${SKIPPED_REASONS[$idx]})"
 done
 
 # Print results sorted by elapsed time (fastest first)

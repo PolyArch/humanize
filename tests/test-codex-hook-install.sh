@@ -32,6 +32,7 @@ FAKE_BIN="$TEST_DIR/bin"
 CODEX_HOME_DIR="$TEST_DIR/codex-home"
 HOOKS_FILE="$CODEX_HOME_DIR/hooks.json"
 FEATURE_LOG="$TEST_DIR/codex-features.log"
+PLUGIN_LOG="$TEST_DIR/codex-plugins.log"
 XDG_CONFIG_HOME_DIR="$TEST_DIR/xdg-config"
 HUMANIZE_USER_CONFIG="$XDG_CONFIG_HOME_DIR/humanize/config.json"
 COMMAND_BIN_DIR="$TEST_DIR/command-bin"
@@ -60,6 +61,16 @@ if [[ "${1:-}" == "exec" ]]; then
 LESSON_IDS: NONE
 RATIONALE: No matching lessons found (fake codex exec).
 OUT
+    exit 0
+fi
+
+if [[ "${1:-}" == "plugin" && "${2:-}" == "marketplace" && "${3:-}" == "add" ]]; then
+    printf 'MARKETPLACE=%s\n' "${4:-}" >> "${TEST_CODEX_PLUGIN_LOG:?}"
+    exit 0
+fi
+
+if [[ "${1:-}" == "plugin" && "${2:-}" == "add" ]]; then
+    printf 'PLUGIN=%s\n' "${3:-}" >> "${TEST_CODEX_PLUGIN_LOG:?}"
     exit 0
 fi
 
@@ -107,7 +118,7 @@ cat > "$HOOKS_FILE" <<'EOF'
 }
 EOF
 
-PATH="$FAKE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$FEATURE_LOG" XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
+PATH="$FAKE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$FEATURE_LOG" TEST_CODEX_PLUGIN_LOG="$PLUGIN_LOG" XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
     "$INSTALL_SCRIPT" \
     --target codex \
     --codex-config-dir "$CODEX_HOME_DIR" \
@@ -121,10 +132,60 @@ else
     fail "Codex install syncs Humanize skill bundle" "skills/humanize/SKILL.md exists" "missing"
 fi
 
-if [[ -f "$CODEX_HOME_DIR/skills/humanize-rlcr/SKILL.md" ]]; then
-    pass "Codex install keeps humanize-rlcr entrypoint skill"
+if [[ ! -e "$CODEX_HOME_DIR/skills/humanize-rlcr/SKILL.md" ]]; then
+    pass "Codex install omits stale humanize-rlcr entrypoint skill"
 else
-    fail "Codex install keeps humanize-rlcr entrypoint skill" "skills/humanize-rlcr/SKILL.md exists" "missing"
+    fail "Codex install omits stale humanize-rlcr entrypoint skill" "skills/humanize-rlcr/SKILL.md absent" "present"
+fi
+
+if [[ ! -e "$CODEX_HOME_DIR/skills/humanize-codex-goal/SKILL.md" ]]; then
+    pass "Codex install omits stale humanize-codex-goal skill"
+else
+    fail "Codex install omits stale humanize-codex-goal skill" "skills/humanize-codex-goal/SKILL.md absent" "present"
+fi
+
+if [[ -f "$CODEX_HOME_DIR/skills/humanize-cgcr/SKILL.md" ]]; then
+    pass "Codex install syncs humanize-cgcr launcher skill"
+else
+    fail "Codex install syncs humanize-cgcr launcher skill" "skills/humanize-cgcr/SKILL.md exists" "missing"
+fi
+
+FLOW_PLUGIN_ROOT="$CODEX_HOME_DIR/marketplaces/humanize-local/plugins/flow"
+
+if [[ -f "$FLOW_PLUGIN_ROOT/.codex-plugin/plugin.json" ]]; then
+    pass "Codex install writes local /flow plugin manifest"
+else
+    fail "Codex install writes local /flow plugin manifest" "$FLOW_PLUGIN_ROOT/.codex-plugin/plugin.json exists" "missing"
+fi
+
+if [[ -f "$FLOW_PLUGIN_ROOT/commands/humanize-cgcr.md" ]]; then
+    pass "Codex install registers /flow:humanize-cgcr command shim"
+else
+    fail "Codex install registers /flow:humanize-cgcr command shim" "$FLOW_PLUGIN_ROOT/commands/humanize-cgcr.md exists" "missing"
+fi
+
+if grep -q 'setup-cgcr.sh' "$FLOW_PLUGIN_ROOT/commands/humanize-cgcr.md"; then
+    pass "CGCR flow shim delegates to installed launcher"
+else
+    fail "CGCR flow shim delegates to installed launcher" "setup-cgcr.sh reference" "$(sed -n '1,80p' "$FLOW_PLUGIN_ROOT/commands/humanize-cgcr.md" 2>/dev/null || echo missing)"
+fi
+
+if grep -q '^MARKETPLACE=.*/marketplaces/humanize-local$' "$PLUGIN_LOG" && grep -q '^PLUGIN=flow@humanize-local$' "$PLUGIN_LOG"; then
+    pass "Codex install invokes plugin registration for /flow commands"
+else
+    fail "Codex install invokes plugin registration for /flow commands" "marketplace and plugin add calls" "$(cat "$PLUGIN_LOG" 2>/dev/null || echo missing)"
+fi
+
+if [[ -f "$CODEX_HOME_DIR/skills/humanize/commands/monitor-codex-goal.md" ]]; then
+    pass "Codex runtime bundle includes Claude monitor command for CGCR launcher"
+else
+    fail "Codex runtime bundle includes Claude monitor command for CGCR launcher" "skills/humanize/commands/monitor-codex-goal.md exists" "missing"
+fi
+
+if [[ -f "$CODEX_HOME_DIR/skills/humanize/skills/monitor-codex-goal/SKILL.md" ]]; then
+    pass "Codex runtime bundle includes Claude monitor skill for CGCR launcher"
+else
+    fail "Codex runtime bundle includes Claude monitor skill for CGCR launcher" "skills/humanize/skills/monitor-codex-goal/SKILL.md exists" "missing"
 fi
 
 if [[ -f "$HOOKS_FILE" ]]; then
@@ -248,7 +309,7 @@ else
     fail "bitlesson-selector shim dispatches into installed runtime" "LESSON_IDS: NONE" "$shim_output"
 fi
 
-PATH="$FAKE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$FEATURE_LOG" XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
+PATH="$FAKE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$FEATURE_LOG" TEST_CODEX_PLUGIN_LOG="$PLUGIN_LOG" XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
     "$INSTALL_SCRIPT" \
     --target codex \
     --codex-config-dir "$CODEX_HOME_DIR" \
@@ -287,6 +348,70 @@ else
     fail "Codex feature enable runs on each Codex install/update" "2 log entries" "$(cat "$FEATURE_LOG")"
 fi
 
+if [[ "$(grep -c '^PLUGIN=flow@humanize-local$' "$PLUGIN_LOG" | tr -d ' ')" == "2" ]]; then
+    pass "Codex /flow plugin registration runs on each Codex install/update"
+else
+    fail "Codex /flow plugin registration runs on each Codex install/update" "2 plugin add calls" "$(cat "$PLUGIN_LOG")"
+fi
+
+HOOKS_FEATURE_BIN="$TEST_DIR/bin-hooks-feature"
+HOOKS_FEATURE_HOME="$TEST_DIR/codex-home-hooks-feature"
+HOOKS_FEATURE_LOG="$TEST_DIR/codex-hooks-feature.log"
+mkdir -p "$HOOKS_FEATURE_BIN" "$HOOKS_FEATURE_HOME"
+
+cat > "$HOOKS_FEATURE_BIN/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "features" && "${2:-}" == "list" ]]; then
+    cat <<'LIST'
+hooks                            stable             true
+LIST
+    exit 0
+fi
+
+if [[ "${1:-}" == "features" && "${2:-}" == "enable" && "${3:-}" == "hooks" ]]; then
+    printf 'CODEX_HOME=%s feature=%s\n' "${CODEX_HOME:-}" "${3:-}" >> "${TEST_CODEX_FEATURE_LOG:?}"
+    mkdir -p "${CODEX_HOME:?}"
+    : > "${CODEX_HOME}/.hooks-enabled"
+    exit 0
+fi
+
+if [[ "${1:-}" == "exec" ]]; then
+    cat <<'OUT'
+LESSON_IDS: NONE
+RATIONALE: No matching lessons found (fake codex exec).
+OUT
+    exit 0
+fi
+
+if [[ "${1:-}" == "plugin" && "${2:-}" == "marketplace" && "${3:-}" == "add" ]]; then
+    exit 0
+fi
+
+if [[ "${1:-}" == "plugin" && "${2:-}" == "add" ]]; then
+    exit 0
+fi
+
+echo "unexpected fake codex invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$HOOKS_FEATURE_BIN/codex"
+
+PATH="$HOOKS_FEATURE_BIN:$PATH" TEST_CODEX_FEATURE_LOG="$HOOKS_FEATURE_LOG" XDG_CONFIG_HOME="$XDG_CONFIG_HOME_DIR" \
+    "$INSTALL_SCRIPT" \
+    --target codex \
+    --codex-config-dir "$HOOKS_FEATURE_HOME" \
+    --codex-skills-dir "$HOOKS_FEATURE_HOME/skills" \
+    --command-bin-dir "$COMMAND_BIN_DIR" \
+    > "$TEST_DIR/install-hooks-feature.log" 2>&1
+
+if [[ -f "$HOOKS_FEATURE_HOME/.hooks-enabled" ]]; then
+    pass "Codex install supports current hooks feature name"
+else
+    fail "Codex install supports current hooks feature name" ".hooks-enabled marker exists" "$(cat "$TEST_DIR/install-hooks-feature.log")"
+fi
+
 UNSUPPORTED_BIN="$TEST_DIR/bin-unsupported"
 UNSUPPORTED_HOME="$TEST_DIR/codex-home-unsupported"
 mkdir -p "$UNSUPPORTED_BIN" "$UNSUPPORTED_HOME"
@@ -323,11 +448,11 @@ else
     fail "Codex install rejects builds without native hooks support" "non-zero exit" "exit 0"
 fi
 
-if grep -q "codex_hooks feature" "$TEST_DIR/install-unsupported.log"; then
-    pass "Unsupported Codex failure explains missing codex_hooks feature"
+if grep -q "hooks/codex_hooks feature" "$TEST_DIR/install-unsupported.log"; then
+    pass "Unsupported Codex failure explains missing hooks feature"
 else
-    fail "Unsupported Codex failure explains missing codex_hooks feature" \
-        "error mentioning codex_hooks feature" \
+    fail "Unsupported Codex failure explains missing hooks feature" \
+        "error mentioning hooks/codex_hooks feature" \
         "$(cat "$TEST_DIR/install-unsupported.log")"
 fi
 

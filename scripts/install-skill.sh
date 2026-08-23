@@ -3,7 +3,7 @@
 # Install/upgrade Humanize skills for Kimi and/or Codex.
 #
 # What this does:
-# 1) Sync skills/{humanize,humanize-gen-plan,humanize-rlcr} to target skills dir(s)
+# 1) Sync Humanize skills to target skills dir(s)
 # 2) Copy runtime dependencies into <skills-dir>/humanize/{scripts,hooks,prompt-template}
 # 3) Hydrate SKILL.md command paths with concrete runtime root paths
 #
@@ -31,6 +31,9 @@ TARGET="kimi"
 KIMI_SKILLS_DIR="${HOME}/.config/agents/skills"
 CODEX_SKILLS_DIR="${CODEX_HOME:-${HOME}/.codex}/skills"
 CODEX_CONFIG_DIR="${CODEX_HOME:-${HOME}/.codex}"
+CODEX_FLOW_MARKETPLACE_NAME="humanize-local"
+CODEX_FLOW_PLUGIN_NAME="flow"
+CODEX_FLOW_PLUGIN_VERSION="0.1.0"
 HUMANIZE_USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/humanize"
 COMMAND_BIN_DIR="${HUMANIZE_COMMAND_BIN_DIR:-${HOME}/.local/bin}"
 LEGACY_SKILLS_DIR=""
@@ -38,9 +41,17 @@ DRY_RUN="false"
 
 SKILL_NAMES=(
     "humanize"
+)
+
+CODEX_SKILL_NAMES=(
+    "humanize-cgcr"
+)
+
+STALE_SKILL_NAMES=(
     "humanize-gen-plan"
     "humanize-refine-plan"
     "humanize-rlcr"
+    "humanize-codex-goal"
 )
 
 usage() {
@@ -82,7 +93,12 @@ validate_repo() {
     [[ -d "$RUNTIME_SOURCE_ROOT/templates" ]] || die "templates directory not found under runtime source root: $RUNTIME_SOURCE_ROOT"
     [[ -d "$RUNTIME_SOURCE_ROOT/config" ]] || die "config directory not found under runtime source root: $RUNTIME_SOURCE_ROOT"
     [[ -d "$RUNTIME_SOURCE_ROOT/agents" ]] || die "agents directory not found under runtime source root: $RUNTIME_SOURCE_ROOT"
-    for skill in "${SKILL_NAMES[@]}"; do
+    local required_skills=("${SKILL_NAMES[@]}")
+    if [[ "$TARGET" == "codex" || "$TARGET" == "both" ]]; then
+        required_skills+=("${CODEX_SKILL_NAMES[@]}")
+    fi
+
+    for skill in "${required_skills[@]}"; do
         [[ -f "$SKILLS_SOURCE_ROOT/$skill/SKILL.md" ]] || die "missing $SKILLS_SOURCE_ROOT/$skill/SKILL.md"
     done
 }
@@ -103,11 +119,11 @@ resolve_source_layout() {
 
     # Installed runtime layout:
     #   <skills-dir>/humanize/scripts/install-skill.sh
-    #   <skills-dir>/humanize-gen-plan/SKILL.md
-    #   <skills-dir>/humanize-rlcr/SKILL.md
+    #   <skills-dir>/humanize/SKILL.md
+    #   <skills-dir>/humanize-cgcr/SKILL.md
     if [[ -d "$runtime_root/scripts" ]] && [[ -d "$runtime_root/hooks" ]] && [[ -d "$runtime_root/prompt-template" ]]; then
         skills_root="$(cd "$runtime_root/.." && pwd)"
-        if [[ -f "$skills_root/humanize/SKILL.md" ]] && [[ -f "$skills_root/humanize-gen-plan/SKILL.md" ]] && [[ -f "$skills_root/humanize-refine-plan/SKILL.md" ]] && [[ -f "$skills_root/humanize-rlcr/SKILL.md" ]]; then
+        if [[ -f "$skills_root/humanize/SKILL.md" ]] && [[ -f "$skills_root/humanize-cgcr/SKILL.md" ]]; then
             SKILLS_SOURCE_ROOT="$skills_root"
             RUNTIME_SOURCE_ROOT="$runtime_root"
             return 0
@@ -152,6 +168,30 @@ sync_one_skill() {
     sync_dir "$src" "$dst"
 }
 
+remove_stale_humanize_skills() {
+    local target_dir="$1"
+    local skill
+    local skill_dir
+    local skill_file
+
+    for skill in "${STALE_SKILL_NAMES[@]}"; do
+        skill_dir="$target_dir/$skill"
+        skill_file="$skill_dir/SKILL.md"
+        [[ -d "$skill_dir" ]] || continue
+
+        if [[ -f "$skill_file" ]] && grep -qE "^name:[[:space:]]*$skill[[:space:]]*$" "$skill_file"; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                log "DRY-RUN remove stale Humanize skill: $skill_dir"
+            else
+                rm -rf "$skill_dir"
+                log "removed stale Humanize skill: $skill_dir"
+            fi
+        else
+            log "skipping non-matching stale skill candidate: $skill_dir"
+        fi
+    done
+}
+
 install_runtime_bundle() {
     local target_dir="$1"
     local runtime_root="$target_dir/humanize"
@@ -162,16 +202,25 @@ install_runtime_bundle() {
     for component in scripts hooks prompt-template templates config agents; do
         sync_dir "$RUNTIME_SOURCE_ROOT/$component" "$runtime_root/$component"
     done
+
+    # Keep a Claude-loadable plugin surface in the runtime bundle so the
+    # Codex-side CGCR launcher can start a monitor pane with --plugin-dir.
+    for component in commands skills; do
+        if [[ -d "$RUNTIME_SOURCE_ROOT/$component" ]]; then
+            sync_dir "$RUNTIME_SOURCE_ROOT/$component" "$runtime_root/$component"
+        fi
+    done
 }
 
 hydrate_skill_runtime_root() {
     local target_dir="$1"
+    shift
     local runtime_root="$target_dir/humanize"
     local skill
     local skill_file
     local tmp
 
-    for skill in "${SKILL_NAMES[@]}"; do
+    for skill in "$@"; do
         skill_file="$target_dir/$skill/SKILL.md"
         [[ -f "$skill_file" ]] || continue
 
@@ -193,11 +242,12 @@ hydrate_skill_runtime_root() {
 
 strip_claude_specific_frontmatter() {
     local target_dir="$1"
+    shift
     local skill
     local skill_file
     local tmp
 
-    for skill in "${SKILL_NAMES[@]}"; do
+    for skill in "$@"; do
         skill_file="$target_dir/$skill/SKILL.md"
         [[ -f "$skill_file" ]] || continue
 
@@ -234,6 +284,10 @@ sync_target() {
     local target_dir="$2"
     local selected_skills=("${SKILL_NAMES[@]}")
 
+    if [[ "$label" == "codex" ]]; then
+        selected_skills+=("${CODEX_SKILL_NAMES[@]}")
+    fi
+
     log "target: $label"
     log "skills dir: $target_dir"
 
@@ -245,9 +299,10 @@ sync_target() {
         log "syncing [$label] skill: $skill"
         sync_one_skill "$skill" "$target_dir"
     done
+    remove_stale_humanize_skills "$target_dir"
     install_runtime_bundle "$target_dir"
-    hydrate_skill_runtime_root "$target_dir"
-    strip_claude_specific_frontmatter "$target_dir"
+    hydrate_skill_runtime_root "$target_dir" "${selected_skills[@]}"
+    strip_claude_specific_frontmatter "$target_dir" "${selected_skills[@]}"
 }
 
 install_codex_native_hooks() {
@@ -331,6 +386,123 @@ PY
     esac
 }
 
+install_codex_flow_plugin() {
+    local marketplace_root="$CODEX_CONFIG_DIR/marketplaces/$CODEX_FLOW_MARKETPLACE_NAME"
+    local plugin_root="$marketplace_root/plugins/$CODEX_FLOW_PLUGIN_NAME"
+    local commands_dir="$plugin_root/commands"
+    local plugin_manifest_dir="$plugin_root/.codex-plugin"
+    local marketplace_dir="$marketplace_root/.agents/plugins"
+    local runtime_root="$CODEX_SKILLS_DIR/humanize"
+
+    if ! command -v codex >/dev/null 2>&1; then
+        die "Codex CLI is required to register /flow slash commands"
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "DRY-RUN install Codex /flow plugin marketplace into: $marketplace_root"
+        log "DRY-RUN run: CODEX_HOME=$CODEX_CONFIG_DIR codex plugin marketplace add $marketplace_root"
+        log "DRY-RUN run: CODEX_HOME=$CODEX_CONFIG_DIR codex plugin add $CODEX_FLOW_PLUGIN_NAME@$CODEX_FLOW_MARKETPLACE_NAME"
+        return
+    fi
+
+    mkdir -p "$commands_dir" "$plugin_manifest_dir" "$marketplace_dir"
+    rm -f "$commands_dir"/humanize-*.md
+
+    cat > "$plugin_manifest_dir/plugin.json" <<EOF
+{
+  "name": "$CODEX_FLOW_PLUGIN_NAME",
+  "version": "$CODEX_FLOW_PLUGIN_VERSION",
+  "description": "Humanize flow slash-command shims for Codex.",
+  "author": {
+    "name": "PolyArch"
+  },
+  "homepage": "https://github.com/PolyArch/humanize",
+  "repository": "https://github.com/PolyArch/humanize",
+  "license": "MIT",
+  "keywords": [
+    "humanize",
+    "flow",
+    "codex",
+    "cgcr"
+  ],
+  "interface": {
+    "displayName": "Humanize Flow",
+    "shortDescription": "Humanize flow commands for Codex",
+    "longDescription": "Registers Humanize flow slash-command shims such as /flow:humanize-cgcr. The commands delegate to installed Humanize skills and runtime scripts instead of creating a second implementation path.",
+    "developerName": "PolyArch",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/PolyArch/humanize",
+    "defaultPrompt": [
+      "Run a Humanize flow in Codex"
+    ],
+    "brandColor": "#334155",
+    "screenshots": []
+  }
+}
+EOF
+
+    cat > "$marketplace_dir/marketplace.json" <<EOF
+{
+  "name": "$CODEX_FLOW_MARKETPLACE_NAME",
+  "interface": {
+    "displayName": "Humanize Local"
+  },
+  "plugins": [
+    {
+      "name": "$CODEX_FLOW_PLUGIN_NAME",
+      "source": {
+        "source": "local",
+        "path": "./plugins/$CODEX_FLOW_PLUGIN_NAME"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
+EOF
+
+    write_flow_command "$commands_dir/humanize-cgcr.md" \
+        "Start Humanize CGCR in Codex with the two-tmux Codex goal and Claude monitor topology." \
+        "<long task prompt>" \
+        "humanize-cgcr" \
+        "Run the Humanize CGCR launcher. It must call the installed setup-cgcr.sh path from $runtime_root and must not create a second CGCR implementation."
+
+    log "registering Codex /flow plugin marketplace: $marketplace_root"
+    CODEX_HOME="$CODEX_CONFIG_DIR" codex plugin marketplace add "$marketplace_root" >/dev/null
+    CODEX_HOME="$CODEX_CONFIG_DIR" codex plugin add "$CODEX_FLOW_PLUGIN_NAME@$CODEX_FLOW_MARKETPLACE_NAME" >/dev/null
+    log "registered /flow:* slash commands through plugin: $CODEX_FLOW_PLUGIN_NAME@$CODEX_FLOW_MARKETPLACE_NAME"
+}
+
+write_flow_command() {
+    local output_file="$1"
+    local description="$2"
+    local argument_hint="$3"
+    local skill_name="$4"
+    local instruction="$5"
+
+    cat > "$output_file" <<EOF
+---
+description: $description
+argument-hint: $argument_hint
+---
+
+$instruction
+
+Use the \`$skill_name\` skill for this flow and pass through the invocation arguments exactly:
+
+\`\`\`text
+\$ARGUMENTS
+\`\`\`
+EOF
+}
+
 install_bitlesson_selector_shim() {
     local primary_runtime_root="$1"
     local secondary_runtime_root="${2:-}"
@@ -387,6 +559,7 @@ install_codex_target() {
     sync_target "codex" "$CODEX_SKILLS_DIR"
     install_codex_user_config "$CODEX_SKILLS_DIR/humanize" "$TARGET"
     install_codex_native_hooks "$CODEX_SKILLS_DIR"
+    install_codex_flow_plugin
 }
 
 while [[ $# -gt 0 ]]; do
@@ -501,6 +674,7 @@ if [[ "$TARGET" == "codex" || "$TARGET" == "both" ]]; then
     cat <<EOF
   - codex: $CODEX_SKILLS_DIR
   - codex hooks: $CODEX_CONFIG_DIR/hooks.json
+  - codex /flow plugin: $CODEX_CONFIG_DIR/marketplaces/$CODEX_FLOW_MARKETPLACE_NAME
 EOF
 fi
 

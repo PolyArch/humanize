@@ -1,13 +1,14 @@
 ---
 name: humanize
-description: Iterative development with AI review. Provides RLCR (Ralph-Loop with Codex Review) for implementation planning and code review loops.
+description: CGCR-only Humanize runtime. Launches Codex Goal with Claude Review and keeps Claude read-only.
 user-invocable: false
 disable-model-invocation: true
 ---
 
-# Humanize - Iterative Development with AI Review
+# Humanize - CGCR Only
 
-Humanize creates a feedback loop where AI implements your plan while another AI independently reviews the work, ensuring quality through continuous refinement.
+Humanize is configured here as a CGCR-only runtime: Codex executes the work in
+`/goal`, while Claude Code monitors as a read-only reviewer.
 
 ## Runtime Root
 
@@ -19,211 +20,74 @@ The installer hydrates this skill with an absolute runtime root path:
 
 All command examples below use `{{HUMANIZE_RUNTIME_ROOT}}`.
 
-## Core Philosophy
+## Active Workflow
 
-**Iteration over Perfection**: Instead of expecting perfect output in one shot, Humanize leverages an iterative feedback loop where:
-- AI implements your plan
-- Another AI independently reviews progress
-- Issues are caught and addressed early
-- Work continues until all acceptance criteria are met
+### CGCR - Codex Goal with Claude Review
 
-## Available Workflows
+CGCR is the only workflow exposed by this Humanize setup.
 
-### 1. RLCR Loop - Iterative Development with Review
+- Codex is the only implementation agent.
+- Claude Code is a read-only reviewer and monitor.
+- Claude Code must not edit files, build, test, commit, reset, install
+  packages, or repair code directly.
+- Feedback flows only through gated `[MONITOR]` tmux injection.
+- If monitor feedback conflicts with the original goal, Codex pauses and asks
+  the user instead of silently following either side.
 
-The RLCR (Ralph-Loop with Codex Review) loop has two phases:
+Use the Codex flow command to start the two-tmux topology:
 
-**Phase 1: Implementation**
-- AI works on the implementation plan
-- AI writes a summary of work completed
-- Codex reviews the summary for completeness and correctness
-- If issues found → feedback loop continues
-- If Codex outputs "COMPLETE" → enters Review Phase
+```text
+/flow:humanize-cgcr <long task prompt>
+```
 
-**Phase 2: Code Review**
-- `codex review --base <branch>` checks code quality
-- Issues marked with `[P0-9]` severity markers
-- If issues found → AI fixes them and continues
-- If no issues → loop completes with Finalize Phase
-- On Codex CLI `0.114.0+` with `codex_hooks` enabled, Humanize installs a native `Stop` hook so exit gating runs automatically
-
-### 2. Generate Plan - Structured Plan from Draft
-
-Transforms a rough draft document into a structured implementation plan with:
-- Clear goal description
-- Acceptance criteria in AC-X format with TDD-style positive/negative tests
-- Path boundaries (upper/lower bounds, allowed choices)
-- Feasibility hints and conceptual approach
-- Dependencies and milestone sequencing
+`/humanize:cgcr` remains the public CGCR command name for the Claude-side
+monitor wrapper. In Codex startup context, it delegates to
+`/flow:humanize-cgcr` or the installed `setup-cgcr.sh` launcher.
 
 ## Commands Reference
 
-### Start RLCR Loop
+### Start CGCR
 
 ```bash
-# With a plan file
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/setup-rlcr-loop.sh" path/to/plan.md
-
-# Or without plan (review-only mode)
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/setup-rlcr-loop.sh" --skip-impl
+"{{HUMANIZE_RUNTIME_ROOT}}/scripts/setup-cgcr.sh" --task "<long task prompt>"
 ```
 
-After each round, write the required summary and stop/exit normally. Humanize's native Codex `Stop` hook handles review gating automatically.
+Useful launcher options:
 
-**Common Options:**
-- `--max N` - Maximum iterations before auto-stop (default: 42)
-- `--codex-model MODEL:EFFORT` - Codex model and reasoning effort for `codex exec` (default: gpt-5.5:high)
-- Review phase `codex review` uses `gpt-5.5:high`
-- `--codex-timeout SECONDS` - Timeout for each Codex review (default: 5400)
-- `--base-branch BRANCH` - Base branch for code review (auto-detects if not specified)
-- `--full-review-round N` - Interval for full alignment checks (default: 5)
-- `--skip-impl` - Skip implementation phase, go directly to code review
-- `--track-plan-file` - Enforce plan-file immutability when tracked in git
-- `--push-every-round` - Require git push after each round
-- `--claude-answer-codex` - Let Claude answer Codex Open Questions directly (default is AskUserQuestion)
-- `--agent-teams` - Enable Agent Teams mode
-- `--yolo` - Skip Plan Understanding Quiz and enable --claude-answer-codex
-- `--skip-quiz` - Skip the Plan Understanding Quiz only
-- `--privacy` - Disable methodology analysis at loop exit (default: analysis enabled)
+- `--goal-id ID` - Set an explicit `MONITOR_TARGET_ID`.
+- `--session NAME` - Set an explicit tmux session name.
+- `--cadence DURATION` - Monitor cadence, for example `10m`, `30m`, or `1h`.
+- `--principles TEXT` - Extra monitor principles.
+- `--notify-only` - Start the monitor without automatic injection.
+- `--prepare-only` - Create `.humanize/cgcr` resources without starting tmux.
 
-### Cancel RLCR Loop
+## Runtime Files
 
-```bash
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/cancel-rlcr-loop.sh"
-# or force cancel during finalize phase
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/cancel-rlcr-loop.sh" --force
+CGCR stores run data in `.humanize/cgcr/<run-id>/`:
+
+```text
+.humanize/
+└── cgcr/
+    └── <run-id>/
+        ├── task.md
+        ├── codex-goal-prompt.md
+        ├── claude-monitor-command.txt
+        ├── resources.json
+        └── README.md
 ```
 
-### Generate Plan from Draft
-
-```bash
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/validate-gen-plan-io.sh" --input path/to/draft.md --output path/to/plan.md
-```
-
-Then follow the workflow in this skill to generate the structured plan content.
-
-### Ask Codex (One-shot Consultation)
-
-```bash
-"{{HUMANIZE_RUNTIME_ROOT}}/scripts/ask-codex.sh" [--codex-model MODEL:EFFORT] [--codex-timeout SECONDS] "your question"
-```
-
-## Plan File Structure
-
-A good plan file should include:
-
-```markdown
-# Plan Title
-
-## Goal Description
-Clear description of what needs to be accomplished
-
-## Acceptance Criteria
-
-- AC-1: First criterion
-  - Positive Tests (expected to PASS):
-    - Test case that should succeed
-  - Negative Tests (expected to FAIL):
-    - Test case that should fail
-
-## Path Boundaries
-
-### Upper Bound (Maximum Scope)
-Most comprehensive acceptable implementation
-
-### Lower Bound (Minimum Scope)
-Minimum viable implementation
-
-### Allowed Choices
-- Can use: technologies, approaches allowed
-- Cannot use: prohibited technologies
-
-## Dependencies and Sequence
-
-### Milestones
-1. Milestone 1: Description
-   - Phase A: ...
-   - Phase B: ...
-
-## Implementation Notes
-- Code should NOT contain plan terminology like "AC-", "Milestone", "Step"
-```
-
-## Goal Tracker System
-
-The RLCR loop uses a Goal Tracker to prevent goal drift:
-
-- **IMMUTABLE SECTION**: Ultimate Goal and Acceptance Criteria (set in Round 0, never changed)
-- **MUTABLE SECTION**: Active Tasks, Completed Items, Deferred Items, Plan Evolution Log
-
-### Key Principles
-
-1. **Acceptance Criteria**: Each task maps to a specific AC
-2. **Plan Evolution Log**: Document any plan changes with justification
-3. **Explicit Deferrals**: Deferred tasks require strong justification
-4. **Full Alignment Checks**: Every N rounds (default: 5), comprehensive goal alignment audit
-
-## Important Rules
-
-1. **Write summaries**: Always write work summary to the specified file before exiting
-2. **Maintain Goal Tracker**: Keep goal-tracker.md up-to-date with progress
-3. **Be thorough**: Include details about implementation, files changed, tests added
-4. **No cheating**: Don't try to exit by editing state files or running cancel commands
-5. **Use the native Stop hook on Codex**: After writing the required summary, stop/exit normally so Codex runs the Humanize Stop hook
-6. **Trust the process**: External review helps improve implementation quality
+Use `resources.json` as the local record of the `MONITOR_TARGET_ID`, tmux
+session name, Codex target, Claude monitor target, and prompt files.
 
 ## Prerequisites
 
-- `codex` - OpenAI Codex CLI (for review)
+- `codex` - OpenAI Codex CLI for the implementation session.
+- `claude` - Claude Code for read-only monitoring.
+- `tmux` - Required for the two-window CGCR topology and gated monitor
+  injection.
 
+## Scope
 
-## Directory Structure
-
-Humanize stores all data in `.humanize/`:
-
-```
-.humanize/
-├── rlcr/           # RLCR loop data
-│   └── <timestamp>/
-│       ├── state.md
-│       ├── goal-tracker.md
-│       ├── round-N-summary.md
-│       ├── round-N-review-result.md
-│       ├── finalize-state.md
-│       ├── finalize-summary.md
-│       ├── methodology-analysis-state.md
-│       ├── methodology-analysis-report.md
-│       ├── methodology-analysis-done.md
-│       └── complete-state.md
-└── skill/          # One-shot skill results
-    └── <timestamp>/
-        ├── input.md
-        ├── output.md
-        └── metadata.md
-```
-
-## Monitoring
-
-Use the monitor script to track loop progress:
-
-```bash
-source "{{HUMANIZE_RUNTIME_ROOT}}/scripts/humanize.sh"
-humanize monitor rlcr   # Monitor RLCR loop
-```
-
-## Exit Codes
-
-### ask-codex.sh
-- `0` - Success
-- `1` - Validation error
-- `124` - Timeout
-
-### validate-gen-plan-io.sh
-- `0` - Success
-- `1` - Input file not found
-- `2` - Input file is empty
-- `3` - Output directory does not exist
-- `4` - Output file already exists
-- `5` - No write permission
-- `6` - Invalid arguments
-- `7` - Plan template file not found
+This setup intentionally exposes no other Humanize workflows. Keep additional
+entrypoints unregistered unless a separate install mode explicitly asks for
+them.
