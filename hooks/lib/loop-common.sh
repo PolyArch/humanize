@@ -221,9 +221,9 @@ elif [[ -n "$_cfg_codex_model" && ! "$_cfg_codex_model" =~ ^(gpt-|o[0-9]) ]]; th
 fi
 DEFAULT_CODEX_MODEL="${DEFAULT_CODEX_MODEL:-${_cfg_codex_model:-gpt-5.5}}"
 _cfg_codex_effort="$(get_config_value "$_LOOP_COMMON_CONFIG" "codex_effort" 2>/dev/null || true)"
-if [[ -n "$_cfg_codex_effort" && ! "$_cfg_codex_effort" =~ ^(xhigh|high|medium|low)$ ]]; then
+if [[ -n "$_cfg_codex_effort" && ! "$_cfg_codex_effort" =~ ^(max|xhigh|high|medium|low)$ ]]; then
     echo "Warning: Invalid codex_effort in merged config: $_cfg_codex_effort" >&2
-    echo "  Must be one of: xhigh, high, medium, low" >&2
+    echo "  Must be one of: max, xhigh, high, medium, low" >&2
     echo "  Ignoring configured codex_effort; using caller preset or fallback" >&2
     _cfg_codex_effort=""
 fi

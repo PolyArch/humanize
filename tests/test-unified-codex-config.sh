@@ -657,7 +657,7 @@ fi
 
 # Test invalid effort value
 invalid_effort="superhigh"
-if [[ ! "$invalid_effort" =~ ^(xhigh|high|medium|low)$ ]]; then
+if [[ ! "$invalid_effort" =~ ^(max|xhigh|high|medium|low)$ ]]; then
     pass "validation: invalid effort value is rejected by regex"
 else
     fail "validation: invalid effort value is rejected by regex"
@@ -665,7 +665,7 @@ fi
 
 # Test valid effort values
 for effort in xhigh high medium low; do
-    if [[ "$effort" =~ ^(xhigh|high|medium|low)$ ]]; then
+    if [[ "$effort" =~ ^(max|xhigh|high|medium|low)$ ]]; then
         pass "validation: effort '$effort' is accepted"
     else
         fail "validation: effort '$effort' is accepted"

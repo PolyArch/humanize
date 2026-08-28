@@ -176,9 +176,9 @@ if [[ ! "$CODEX_EXEC_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
-if [[ ! "$CODEX_EXEC_EFFORT" =~ ^(xhigh|high|medium|low)$ ]]; then
+if [[ ! "$CODEX_EXEC_EFFORT" =~ ^(max|xhigh|high|medium|low)$ ]]; then
     echo "Error: Invalid codex effort in state file: $CODEX_EXEC_EFFORT" >&2
-    echo "  Must be one of: xhigh, high, medium, low" >&2
+    echo "  Must be one of: max, xhigh, high, medium, low" >&2
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
