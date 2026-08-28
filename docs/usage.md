@@ -11,6 +11,11 @@ Humanize creates an iterative feedback loop with two phases:
 
 The loop continues until all acceptance criteria are met or no issues remain.
 
+When a plan includes `Feature Map / Capability Map`, RLCR also tracks a per-round
+`Capability Anchor`. Claude uses it to keep implementation tied to the relevant
+business, design, and implementation context, while Codex reviews capability-map
+alignment alongside normal acceptance criteria.
+
 ## Begin with the End in Mind
 
 Before the RLCR loop starts any work, Humanize runs a **Plan Understanding Quiz** -- a brief pre-flight check that verifies you genuinely understand the plan you are about to execute.
@@ -46,6 +51,9 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
    ```bash
    /humanize:gen-plan --input draft.md --output docs/plan.md
    ```
+   The generated plan includes a `Feature Map / Capability Map` that records
+   capability dependencies and context before tasks are split into executable
+   `coding` and `analyze` work.
 2. If the plan is reviewed with comment annotations, refine it and generate a QA ledger:
    ```bash
    /humanize:refine-plan --input docs/plan.md
@@ -59,6 +67,8 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 
 | Command | Purpose |
 |---------|---------|
+| `/gen-idea <idea-or-path>` | Generate a repo-grounded idea draft with N parallel directions |
+| `/explore-idea <draft-or-directions.json>` | Launch bounded parallel prototype workers and synthesize a two-tier report |
 | `/start-rlcr-loop <plan.md>` | Start iterative development with Codex review |
 | `/cancel-rlcr-loop` | Cancel active loop |
 | `/gen-plan --input <draft.md> --output <plan.md>` | Generate structured plan from draft |
@@ -66,6 +76,52 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 | `/ask-codex [question]` | One-shot consultation with Codex |
 
 ## Command Reference
+
+### gen-idea
+
+```
+/humanize:gen-idea <idea-text-or-path> [--n <int>] [--output <path>]
+```
+
+Generates a repo-grounded idea draft using directed-diversity exploration. A lead agent picks N orthogonal directions, N parallel Explore subagents develop each direction with objective evidence from the repo, and the lead synthesizes a draft with one primary direction plus N-1 alternatives.
+
+**Outputs:**
+- Draft file: `.humanize/ideas/<slug>-<timestamp>.md` (or `--output` path)
+- Companion JSON: `<draft-path-without-.md>.directions.json` — lossless record of all direction proposals, used as input to `explore-idea`
+
+**Options:**
+- `--n <int>` — number of parallel directions (default: 6)
+- `--output <path>` — custom output path for the draft (must have `.md` suffix)
+
+### explore-idea
+
+```
+/humanize:explore-idea <draft.md | draft.directions.json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N]
+```
+
+Launches bounded parallel prototype workers — one per selected direction — each running in an isolated git worktree. After all workers complete, synthesizes an explore report plus a plan-ready final idea:
+- **Tier 1**: Best product direction (ranked by user value, evidence, strategic fit)
+- **Tier 2**: Most implementation-ready prototype (ranked by outcome: task status, Codex verdict, tests, commits)
+
+**Options:**
+- `--directions <ids>` — comma-separated `direction_id` or `source_index` values to run (default: first 6 by display order)
+- `--concurrency <N>` — parallel worker count (default: 6, max: 10)
+- `--max-worker-iterations <N>` — per-worker iteration cap (default: 2, max: 3)
+- `--worker-timeout-min <N>` — worker timeout in minutes (default: 60, max: 60)
+- `--codex-timeout-min <N>` — Codex call timeout in minutes (default: 20, max: 20)
+
+**Run artifacts** stored in `.humanize/explore/<RUN_ID>/`:
+- `manifest.json` — coordinator state and per-worker metadata
+- `dispatch-prompts/` — exact prompts sent to each worker
+- `worker-results.jsonl` — machine-readable result rows
+- `explore-report.md` — audit report with two-tier rankings, adoption paths, and cleanup guidance
+- `final-idea.md` — plan-ready synthesis artifact for `/humanize:gen-plan`
+
+Default follow-up:
+```bash
+/humanize:gen-plan --input .humanize/explore/<run-id>/final-idea.md --output docs/plan.md
+/humanize:start-rlcr-loop docs/plan.md
+```
 
 ### start-rlcr-loop
 
@@ -112,6 +168,8 @@ OPTIONS:
              (discussion mode only; ignored in --direct)
   --discussion  Use discussion mode (iterative Claude/Codex convergence rounds)
   --direct      Use direct mode (skip convergence rounds, proceed immediately to plan)
+  --coach
+             Run mandatory short-answer stage quizzes before expanding each planning layer
   -h, --help             Show help message
 ```
 
@@ -122,8 +180,13 @@ Workflow:
 2. Checks if draft is relevant to the repository
 3. Analyzes draft for clarity, consistency, completeness, and functionality
 4. Engages user to resolve any issues found
-5. Generates a structured plan.md with acceptance criteria
-6. Optionally starts `/humanize:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
+5. When `--coach` is enabled, runs mandatory stage quizzes after each planning stage; normal plan decision questions stay separate, and quiz mismatches become design drift, AI design corrections, or background gaps before overall acceptance
+6. Generates a structured plan.md with acceptance criteria, capability map, and task routing tags
+7. Optionally starts `/humanize:start-rlcr-loop` if `--auto-start-rlcr-if-converged` conditions are met
+
+The capability map supplements the task breakdown: it tells Claude and Codex
+which global feature or capability each task belongs to, what it depends on, and
+which business/design/implementation context must be preserved during RLCR.
 
 If reviewers later annotate the generated plan with comment blocks, run
 `/humanize:refine-plan --input <plan.md>` before starting or resuming implementation.
@@ -266,7 +329,7 @@ Current built-in keys:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `codex_model` | `gpt-5.5` | Shared default model for Codex-backed review and analysis |
-| `codex_effort` | `high` | Shared default reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `codex_effort` | `high` | Shared default reasoning effort (`max`, `xhigh`, `high`, `medium`, `low`) |
 | `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
 | `provider_mode` | unset | Optional runtime mode hint such as `codex-only` |
 | `agent_teams` | `false` | Project-level default for agent teams workflow |
@@ -280,7 +343,7 @@ All Codex-using features (RLCR loop, ask-codex) share the same model configurati
 | Key | Default | Description |
 |-----|---------|-------------|
 | `codex_model` | `gpt-5.5` | Model used for Codex operations (reviews, analysis, queries) |
-| `codex_effort` | `high` | Reasoning effort (`xhigh`, `high`, `medium`, `low`) |
+| `codex_effort` | `high` | Reasoning effort (`max`, `xhigh`, `high`, `medium`, `low`) |
 
 To override, add to `.humanize/config.json`:
 
@@ -315,12 +378,92 @@ Set up the monitoring helper for real-time progress tracking:
 # Add to your .bashrc or .zshrc
 source ~/.claude/plugins/cache/PolyArch/humanize/<LATEST.VERSION>/scripts/humanize.sh
 
-# Monitor RLCR loop progress
-humanize monitor rlcr
+# Terminal monitors (one project per terminal):
+humanize monitor rlcr        # latest RLCR loop log
+humanize monitor skill       # all skill invocations (codex + gemini)
+humanize monitor codex       # ask-codex skill invocations only
+humanize monitor gemini      # ask-gemini skill invocations only
 
+# Browser dashboard (multiple loops at once, foreground default):
+humanize monitor web --project /path/to/project
 ```
 
 Progress data is stored in `.humanize/rlcr/<timestamp>/` for each loop session.
+
+### Browser dashboard (`humanize monitor web`)
+
+The web dashboard layers on top of the same `.humanize/rlcr/<session>/`
+metadata and `~/.cache/humanize/<sanitized-project>/<session>/round-*-codex-{run,review}.log`
+cache logs that the terminal monitors read. There is no parallel
+capture pipeline; the dashboard is a reader, not a writer.
+
+Lifecycle (per DEC-1, DEC-3):
+
+- Foreground default (`humanize monitor web --project <path>`). Press
+  Ctrl+C to stop. The server is CLI-fixed to one project at startup;
+  to monitor several projects simultaneously, run multiple instances
+  (one per project) with different `--port` values.
+- `--daemon` runs the same server inside a per-project tmux session
+  (`humanize-viz-<8-hex>`); use `viz-stop.sh --project <path>` or
+  the project's own tmux kill command to stop it.
+
+Per-session inline live log panes appear on the home page for every
+active session, driven by Server-Sent Events from
+`/api/sessions/<session_id>/logs/<basename>`. Multiple loops stream
+in parallel without leaving the home page.
+
+### Remote browser access
+
+The dashboard binds to `127.0.0.1` by default. To expose it over the
+network, supply `--host` and an authentication token. The token is
+required for any non-loopback host; the server refuses to start
+otherwise.
+
+Token-aware endpoints honor `Authorization: Bearer <tok>` for normal
+fetch requests and `?token=<tok>` query parameters for the SSE stream
+(per DEC-4: browsers cannot set arbitrary headers on EventSource).
+WebSocket transport is rejected entirely in remote mode.
+
+#### Pattern 1 (recommended): SSH tunnel
+
+The safest remote pattern keeps the server bound to localhost and
+forwards the port over SSH:
+
+```bash
+# On the server machine:
+humanize monitor web --project /path/to/project --port 18000
+
+# On your laptop:
+ssh -N -L 18000:localhost:18000 user@server.example.com
+# Then open http://localhost:18000 in the local browser.
+```
+
+No token is required because the server still binds to loopback. The
+SSH tunnel provides authentication and encryption.
+
+#### Pattern 2: Direct LAN bind
+
+For trusted-network deployments where SSH tunneling is impractical:
+
+```bash
+# Generate a strong random token (one-time):
+TOKEN="$(openssl rand -hex 32)"
+
+# Start the dashboard:
+humanize monitor web \
+    --project /path/to/project \
+    --host 0.0.0.0 \
+    --port 18000 \
+    --auth-token "$TOKEN"
+
+# Or supply the token via env var instead of CLI:
+HUMANIZE_VIZ_TOKEN="$TOKEN" humanize monitor web \
+    --project /path/to/project --host 0.0.0.0 --port 18000
+```
+
+Open the dashboard with `http://server:18000/?token=<TOKEN>` once;
+the browser caches the token in `sessionStorage` and propagates it
+on subsequent fetches and SSE reconnects.
 
 ## Cancellation
 

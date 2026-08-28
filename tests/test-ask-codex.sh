@@ -7,6 +7,8 @@
 #   MOCK_CODEX_EXIT_CODE - exit code the mock returns (default: 0)
 #   MOCK_CODEX_STDOUT    - text the mock writes to stdout
 #   MOCK_CODEX_STDERR    - text the mock writes to stderr
+#   MOCK_CODEX_HELP_OUTPUT - text the mock writes for `codex --help`
+#   MOCK_CODEX_ARGS_FILE - optional file where non-help argv is captured
 #
 
 set -euo pipefail
@@ -40,6 +42,23 @@ cat > "$MOCK_BIN_DIR/codex" << 'MOCK_EOF'
 #!/usr/bin/env bash
 # Mock codex binary for testing ask-codex.sh
 # Controlled via environment variables.
+if printf '%s\n' "$@" | grep -qx -- '--help'; then
+    if [[ "${1:-}" == "--disable" ]]; then
+        feature="${2:-}"
+        supported_features=" ${MOCK_CODEX_SUPPORTED_FEATURES:-hooks plugin_hooks codex_hooks} "
+        if [[ "$supported_features" != *" $feature "* ]]; then
+            echo "unknown feature: $feature" >&2
+            exit 2
+        fi
+    fi
+    if [[ -n "${MOCK_CODEX_HELP_OUTPUT:-}" ]]; then
+        echo "$MOCK_CODEX_HELP_OUTPUT"
+    fi
+    exit 0
+fi
+if [[ -n "${MOCK_CODEX_ARGS_FILE:-}" ]]; then
+    printf '%s\n' "$@" > "$MOCK_CODEX_ARGS_FILE"
+fi
 if [[ -n "${MOCK_CODEX_STDERR:-}" ]]; then
     echo "$MOCK_CODEX_STDERR" >&2
 fi
@@ -57,11 +76,59 @@ export MOCK_CODEX_EXIT_CODE=""
 export MOCK_CODEX_STDOUT=""
 export MOCK_CODEX_STDERR=""
 
-# Reset mock state between tests
+# Reset mock state between tests; also clears the skill dir so that
+# find...sort|tail -1 always picks the single dir from the next invocation.
 reset_mock() {
     export MOCK_CODEX_EXIT_CODE="0"
     export MOCK_CODEX_STDOUT=""
     export MOCK_CODEX_STDERR=""
+    export MOCK_CODEX_HELP_OUTPUT=""
+    export MOCK_CODEX_ARGS_FILE=""
+    export MOCK_CODEX_SUPPORTED_FEATURES="hooks plugin_hooks codex_hooks"
+    rm -rf "$MOCK_PROJECT/.humanize/skill" 2>/dev/null || true
+}
+
+# Override XDG_CACHE_HOME for run_ask_codex_capturing_dir; set to a non-writable path
+# to exercise the fallback cache branch (CACHE_DIR=$SKILL_DIR/cache).
+RUN_XDG_CACHE_HOME="$TEST_DIR/cache"
+
+# Helper: run ask-codex with a controllable XDG_CACHE_HOME, capture stderr, and
+# derive the exact project-local skill dir for that invocation.
+# Sets RUN_EXIT_CODE (int) and RUN_SKILL_DIR (path, empty on resolution failure).
+#
+# Primary: "ask-codex: response saved to .../output.md" (emitted on success, always
+#   project-local regardless of which cache layout was used).
+# Fallback A: "ask-codex: cache=.../skill-<id>"  -> normal layout
+# Fallback B: "ask-codex: cache=.../.humanize/skill/<id>/cache" -> fallback layout
+# If none of the above match, RUN_SKILL_DIR is set to "" (explicit failure).
+run_ask_codex_capturing_dir() {
+    local run_stderr output_path cache_path skill_basename
+    RUN_EXIT_CODE=0
+    run_stderr=$(
+        cd "$MOCK_PROJECT"
+        export CLAUDE_PROJECT_DIR="$MOCK_PROJECT"
+        export XDG_CACHE_HOME="$RUN_XDG_CACHE_HOME"
+        export XDG_CONFIG_HOME="$TEST_DIR/no-user-config"
+        PATH="$MOCK_BIN_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@" 2>&1 >/dev/null
+    ) || RUN_EXIT_CODE=$?
+    output_path=$(printf '%s\n' "$run_stderr" | grep "^ask-codex: response saved to " | sed 's/^ask-codex: response saved to //')
+    if [[ -n "$output_path" ]]; then
+        RUN_SKILL_DIR=$(dirname "$output_path")
+        return
+    fi
+    cache_path=$(printf '%s\n' "$run_stderr" | grep "^ask-codex: cache=" | sed 's/^ask-codex: cache=//')
+    skill_basename=$(basename "$cache_path")
+    case "$skill_basename" in
+        skill-*)
+            RUN_SKILL_DIR="$MOCK_PROJECT/.humanize/skill/${skill_basename#skill-}"
+            ;;
+        cache)
+            RUN_SKILL_DIR=$(dirname "$cache_path")
+            ;;
+        *)
+            RUN_SKILL_DIR=""
+            ;;
+    esac
 }
 
 # Helper: run ask-codex with mock codex in PATH, inside mock project
@@ -70,6 +137,7 @@ run_ask_codex() {
         cd "$MOCK_PROJECT"
         export CLAUDE_PROJECT_DIR="$MOCK_PROJECT"
         export XDG_CACHE_HOME="$TEST_DIR/cache"
+        export XDG_CONFIG_HOME="$TEST_DIR/no-user-config"
         PATH="$MOCK_BIN_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@"
     )
 }
@@ -209,6 +277,54 @@ else
     fail "successful run exits 0" "exit 0" "exit=$EXIT_CODE"
 fi
 
+# Test: supported Codex --disable flag disables all known hook features
+reset_mock
+export MOCK_CODEX_STDOUT="hook-disable-test"
+export MOCK_CODEX_HELP_OUTPUT="  --disable <feature>   Disable a feature"
+export MOCK_CODEX_SUPPORTED_FEATURES="hooks plugin_hooks codex_hooks"
+ASK_CODEX_ARGS_FILE="$TEST_DIR/ask-codex-args.txt"
+export MOCK_CODEX_ARGS_FILE="$ASK_CODEX_ARGS_FILE"
+EXIT_CODE=0
+run_ask_codex "hook disable test" > /dev/null 2>&1 || EXIT_CODE=$?
+CAPTURED_ARGS="$(cat "$ASK_CODEX_ARGS_FILE" 2>/dev/null || true)"
+if [[ $EXIT_CODE -eq 0 ]] \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'exec' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- '--disable' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'hooks' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'plugin_hooks' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'codex_hooks'; then
+    pass "successful run disables all known hook features for nested codex exec"
+else
+    fail "successful run disables all known hook features for nested codex exec" \
+        "exec args include hooks, plugin_hooks, codex_hooks" \
+        "exit=$EXIT_CODE, args=$CAPTURED_ARGS"
+fi
+reset_mock
+
+# Test: older Codex builds only receive supported hook feature names
+reset_mock
+export MOCK_CODEX_STDOUT="legacy-hook-disable-test"
+export MOCK_CODEX_HELP_OUTPUT="  --disable <feature>   Disable a feature"
+export MOCK_CODEX_SUPPORTED_FEATURES="codex_hooks"
+ASK_CODEX_ARGS_FILE="$TEST_DIR/ask-codex-legacy-args.txt"
+export MOCK_CODEX_ARGS_FILE="$ASK_CODEX_ARGS_FILE"
+EXIT_CODE=0
+run_ask_codex "legacy hook disable test" > /dev/null 2>&1 || EXIT_CODE=$?
+CAPTURED_ARGS="$(cat "$ASK_CODEX_ARGS_FILE" 2>/dev/null || true)"
+if [[ $EXIT_CODE -eq 0 ]] \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'exec' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- '--disable' \
+    && echo "$CAPTURED_ARGS" | grep -qx -- 'codex_hooks' \
+    && ! echo "$CAPTURED_ARGS" | grep -qx -- 'hooks' \
+    && ! echo "$CAPTURED_ARGS" | grep -qx -- 'plugin_hooks'; then
+    pass "successful run disables only supported hook features for older codex"
+else
+    fail "successful run disables only supported hook features for older codex" \
+        "exec args include only codex_hooks" \
+        "exit=$EXIT_CODE, args=$CAPTURED_ARGS"
+fi
+reset_mock
+
 # ========================================
 # Error Handling Tests
 # ========================================
@@ -330,9 +446,10 @@ echo ""
 # Test: --codex-model MODEL:EFFORT sets both model and effort
 reset_mock
 export MOCK_CODEX_STDOUT="model-test"
-run_ask_codex --codex-model "custom-model:high" "model test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
-if [[ -n "$LATEST_DIR" ]] && grep -q "Model: custom-model" "$LATEST_DIR/input.md" && grep -q "Effort: high" "$LATEST_DIR/input.md"; then
+run_ask_codex_capturing_dir --codex-model "custom-model:high" "model test"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -d "$RUN_SKILL_DIR" ]] \
+        && grep -q "Model: custom-model" "$RUN_SKILL_DIR/input.md" \
+        && grep -q "Effort: high" "$RUN_SKILL_DIR/input.md"; then
     pass "--codex-model MODEL:EFFORT parses model and effort"
 else
     fail "--codex-model MODEL:EFFORT parses model and effort"
@@ -341,9 +458,10 @@ fi
 # Test: --codex-model MODEL (no effort) uses default effort
 reset_mock
 export MOCK_CODEX_STDOUT="effort-default-test"
-run_ask_codex --codex-model "solo-model" "effort default test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
-if [[ -n "$LATEST_DIR" ]] && grep -q "Model: solo-model" "$LATEST_DIR/input.md" && grep -q "Effort: high" "$LATEST_DIR/input.md"; then
+run_ask_codex_capturing_dir --codex-model "solo-model" "effort default test"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -d "$RUN_SKILL_DIR" ]] \
+        && grep -q "Model: solo-model" "$RUN_SKILL_DIR/input.md" \
+        && grep -q "Effort: high" "$RUN_SKILL_DIR/input.md"; then
     pass "--codex-model MODEL without effort uses default high"
 else
     fail "--codex-model MODEL without effort uses default high"
@@ -352,9 +470,9 @@ fi
 # Test: -- separator treats remaining args as question
 reset_mock
 export MOCK_CODEX_STDOUT="separator-test"
-run_ask_codex -- --not-a-flag "is question" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
-if [[ -n "$LATEST_DIR" ]] && grep -qF -- "--not-a-flag" "$LATEST_DIR/input.md"; then
+run_ask_codex_capturing_dir -- --not-a-flag "is question"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -d "$RUN_SKILL_DIR" ]] \
+        && grep -qF -- "--not-a-flag" "$RUN_SKILL_DIR/input.md"; then
     pass "-- separator passes remaining args as question text"
 else
     fail "-- separator passes remaining args as question text"
@@ -363,12 +481,32 @@ fi
 # Test: --codex-timeout is recorded in input.md
 reset_mock
 export MOCK_CODEX_STDOUT="timeout-val"
-run_ask_codex --codex-timeout 123 "timeout value test" > /dev/null 2>&1
-LATEST_DIR=$(find "$MOCK_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
-if [[ -n "$LATEST_DIR" ]] && grep -q "Timeout: 123s" "$LATEST_DIR/input.md"; then
+run_ask_codex_capturing_dir --codex-timeout 123 "timeout value test"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -d "$RUN_SKILL_DIR" ]] \
+        && grep -q "Timeout: 123s" "$RUN_SKILL_DIR/input.md"; then
     pass "--codex-timeout value is recorded in input.md"
 else
     fail "--codex-timeout value is recorded in input.md"
+fi
+
+# Test: run_ask_codex_capturing_dir resolves correct skill dir when home cache is not writable
+# (exercises the ask-codex.sh fallback branch: CACHE_DIR=$SKILL_DIR/cache)
+READONLY_CACHE="$TEST_DIR/readonly-cache"
+mkdir -p "$READONLY_CACHE"
+chmod 444 "$READONLY_CACHE"
+reset_mock
+export MOCK_CODEX_STDOUT="fallback-cache-test"
+RUN_XDG_CACHE_HOME="$READONLY_CACHE"
+run_ask_codex_capturing_dir "fallback cache skill dir test"
+RUN_XDG_CACHE_HOME="$TEST_DIR/cache"
+chmod 755 "$READONLY_CACHE"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -d "$RUN_SKILL_DIR" ]] \
+        && grep -q "fallback cache skill dir test" "$RUN_SKILL_DIR/input.md"; then
+    pass "run_ask_codex_capturing_dir resolves skill dir when home cache is not writable"
+else
+    fail "run_ask_codex_capturing_dir resolves skill dir when home cache is not writable" \
+        "exit 0 + valid skill dir with input.md" \
+        "exit=$RUN_EXIT_CODE skill_dir=$RUN_SKILL_DIR"
 fi
 
 # ========================================
@@ -431,6 +569,125 @@ if grep -Fq 'one quoted final argument' "$ASK_CODEX_SKILL"; then
     pass "skill requires one quoted final argument for free-form text"
 else
     fail "skill requires one quoted final argument for free-form text" "quoted final argument guidance" "missing"
+fi
+
+# ========================================
+# Auto-Probe: Nested Hook Disable Tests
+# ========================================
+
+echo ""
+echo "--- Auto-Probe: Nested Hook Disable Tests ---"
+echo ""
+
+# Setup: create a secondary mock codex binary directory for probe tests,
+# so the probe result is not cached from earlier tests.
+PROBE_BIN_DIR="$TEST_DIR/probe-bin"
+PROBE_PROJECT="$TEST_DIR/probe-project"
+init_test_git_repo "$PROBE_PROJECT"
+mkdir -p "$PROBE_BIN_DIR"
+
+run_ask_codex_probe() {
+    (
+        cd "$PROBE_PROJECT"
+        export CLAUDE_PROJECT_DIR="$PROBE_PROJECT"
+        export XDG_CACHE_HOME="$TEST_DIR/cache-probe"
+        export XDG_CONFIG_HOME="$TEST_DIR/no-user-config"
+        PATH="$PROBE_BIN_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@"
+    )
+}
+
+# Test A: when codex supports --disable, ask-codex.sh injects --disable hooks
+# Create a mock codex that echoes "--disable" in its --help output
+cat > "$PROBE_BIN_DIR/codex" << 'PROBE_MOCK_SUPPORTS'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]] || echo "$*" | grep -q -- '--help'; then
+    echo "--disable <feature>   Disable a named feature"
+    for i in $(seq 1 5000); do
+        printf -- "--noise-%s\n" "$i"
+    done
+    exit 0
+fi
+if [[ -n "${MOCK_CODEX_STDERR:-}" ]]; then echo "$MOCK_CODEX_STDERR" >&2; fi
+if [[ -n "${MOCK_CODEX_STDOUT:-}" ]]; then echo "$MOCK_CODEX_STDOUT"; fi
+cat > /dev/null
+exit "${MOCK_CODEX_EXIT_CODE:-0}"
+PROBE_MOCK_SUPPORTS
+chmod +x "$PROBE_BIN_DIR/codex"
+
+reset_mock
+export MOCK_CODEX_STDOUT="probe-test-supports"
+run_ask_codex_probe "probe disable test" > /dev/null 2>&1 || true
+
+# Check that the cached probe result lists the supported hook features.
+PROBE_SKILL_DIR=$(find "$PROBE_PROJECT/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+if [[ -n "$PROBE_SKILL_DIR" ]] && [[ -f "$PROBE_SKILL_DIR/.codex-disable-hooks-features" ]]; then
+    PROBE_RESULT=$(cat "$PROBE_SKILL_DIR/.codex-disable-hooks-features")
+    if echo "$PROBE_RESULT" | grep -qx -- 'hooks' \
+        && echo "$PROBE_RESULT" | grep -qx -- 'plugin_hooks' \
+        && echo "$PROBE_RESULT" | grep -qx -- 'codex_hooks'; then
+        pass "auto-probe: cached supported hook features when codex supports --disable"
+    else
+        fail "auto-probe: cached supported hook features when codex supports --disable" \
+            "hooks, plugin_hooks, codex_hooks" "$PROBE_RESULT"
+    fi
+else
+    fail "auto-probe: probe cache file created" "cache file exists" "not found"
+fi
+
+# Test B: when codex does NOT support --disable, probe result is "no"
+PROBE_BIN_NO_DIR="$TEST_DIR/probe-bin-no"
+PROBE_PROJECT_NO="$TEST_DIR/probe-project-no"
+init_test_git_repo "$PROBE_PROJECT_NO"
+mkdir -p "$PROBE_BIN_NO_DIR"
+
+cat > "$PROBE_BIN_NO_DIR/codex" << 'PROBE_MOCK_NO_SUPPORT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]] || echo "$*" | grep -q -- '--help'; then
+    echo "Usage: codex exec [options]"
+    echo "  --full-auto   Run without prompts"
+    exit 0
+fi
+if [[ -n "${MOCK_CODEX_STDERR:-}" ]]; then echo "$MOCK_CODEX_STDERR" >&2; fi
+if [[ -n "${MOCK_CODEX_STDOUT:-}" ]]; then echo "$MOCK_CODEX_STDOUT"; fi
+cat > /dev/null
+exit "${MOCK_CODEX_EXIT_CODE:-0}"
+PROBE_MOCK_NO_SUPPORT
+chmod +x "$PROBE_BIN_NO_DIR/codex"
+
+run_ask_codex_probe_no() {
+    (
+        cd "$PROBE_PROJECT_NO"
+        export CLAUDE_PROJECT_DIR="$PROBE_PROJECT_NO"
+        export XDG_CACHE_HOME="$TEST_DIR/cache-probe-no"
+        export XDG_CONFIG_HOME="$TEST_DIR/no-user-config"
+        PATH="$PROBE_BIN_NO_DIR:$PATH" bash "$ASK_CODEX_SCRIPT" "$@"
+    )
+}
+
+reset_mock
+export MOCK_CODEX_STDOUT="probe-test-no-support"
+run_ask_codex_probe_no "probe no-support test" > /dev/null 2>&1 || true
+
+PROBE_NO_SKILL_DIR=$(find "$PROBE_PROJECT_NO/.humanize/skill" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | tail -1)
+if [[ -n "$PROBE_NO_SKILL_DIR" ]] && [[ -f "$PROBE_NO_SKILL_DIR/.codex-disable-hooks-features" ]]; then
+    PROBE_NO_RESULT=$(cat "$PROBE_NO_SKILL_DIR/.codex-disable-hooks-features")
+    if [[ -z "$PROBE_NO_RESULT" ]]; then
+        pass "auto-probe: cached empty feature list when codex does not support --disable"
+    else
+        fail "auto-probe: cached empty feature list when codex does not support --disable" \
+            "(empty)" "$PROBE_NO_RESULT"
+    fi
+else
+    fail "auto-probe: probe cache file created for no-support case" "cache file exists" "not found"
+fi
+
+# Test C: ask-codex.sh script contains the probe implementation
+if grep -q "for feature_name in hooks plugin_hooks codex_hooks" "$ASK_CODEX_SCRIPT" \
+    && grep -q "codex-disable-hooks-features" "$ASK_CODEX_SCRIPT"; then
+    pass "ask-codex.sh contains nested hook disable auto-probe implementation"
+else
+    fail "ask-codex.sh contains nested hook disable auto-probe implementation" \
+        "feature loop + probe cache" "not found"
 fi
 
 # ========================================

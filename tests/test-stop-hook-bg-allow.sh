@@ -11,26 +11,27 @@
 #
 # Acceptance criteria exercised here (see
 # .humanize/rlcr/2026-04-16_13-19-26/goal-tracker.md for authoritative list):
-#   AC-1   no bg dispatches                          -> normal Codex flow
-#   AC-2   pending subagent                          -> exit 0 + systemMessage
-#   AC-3   pending shell                             -> exit 0 + systemMessage
-#   AC-4   subagent launch + complete                -> normal Codex flow
-#   AC-5   2 subagents + 1 shell                     -> systemMessage mentions "3 background"
-#   AC-6   missing transcript path                   -> normal Codex flow (fail-closed)
-#   AC-7   no active loop                            -> exit 0, no systemMessage, no Codex
-#   AC-8   finalize phase pending bg                 -> exit 0 + systemMessage
-#   AC-9   via rlcr-stop-gate.sh                     -> exit 0 (wrapper ALLOW)
-#   AC-10  tilde transcript path                     -> short-circuit fires
-#   AC-11  cross-session bg-pending.marker           -> "parked" systemMessage, artifacts intact
-#   AC-12  find_active_loop prefers exact session    -> returns older exact-match dir
-#   AC-13  same-session resume                       -> stale marker removed
-#   AC-14  cross-session stop with marker            -> marker and stored session_id preserved
-#   AC-15  task_notification completion format       -> marks launch completed
-#   AC-16  mixed legacy + SDK completions            -> resolves to empty pending set
-#   AC-17  unreadable transcript with marker         -> marker and session_id preserved
-#   AC-18  find_active_loop default ignores marker   -> validators stay isolated
-#   AC-19  hook input omits session_id               -> cross-session guard fires
-#   AC-20  malformed transcript with marker          -> marker preserved (fail-closed)
+#   no bg dispatches                          -> normal Codex flow
+#   pending subagent                          -> exit 0 + systemMessage
+#   pending shell                             -> exit 0 + systemMessage
+#   subagent launch + complete                -> normal Codex flow
+#   2 subagents + 1 shell                     -> systemMessage mentions "3 background"
+#   missing transcript path                   -> normal Codex flow (fail-closed)
+#   no active loop                            -> exit 0, no systemMessage, no Codex
+#   finalize phase pending bg                 -> exit 0 + systemMessage
+#   via rlcr-stop-gate.sh                     -> exit 0 (wrapper ALLOW)
+#   tilde transcript path                     -> short-circuit fires
+#   cross-session bg-pending.marker           -> "parked" systemMessage, artifacts intact
+#   find_active_loop prefers exact session    -> returns older exact-match dir
+#   same-session resume                       -> stale marker removed
+#   cross-session stop with marker            -> marker and stored session_id preserved
+#   task_notification completion format       -> marks launch completed
+#   mixed legacy + SDK completions            -> resolves to empty pending set
+#   unreadable transcript with marker         -> marker and session_id preserved
+#   find_active_loop default ignores marker   -> validators stay isolated
+#   hook input omits session_id               -> cross-session guard fires
+#   malformed transcript with marker          -> marker preserved (fail-closed)
+#   TaskStop scan with non-string message     -> unrelated tool_result does not poison completions
 #
 
 set -euo pipefail
@@ -47,8 +48,8 @@ setup_test_dir
 export XDG_CACHE_HOME="$TEST_DIR/.cache"
 mkdir -p "$XDG_CACHE_HOME"
 
-# Fake HOME rooted inside $TEST_DIR so the tilde-path regressions (AC-10,
-# AC-10b, AC-10c) do not write into the real user home. The hook, helper,
+# Fake HOME rooted inside $TEST_DIR so the tilde-path regressions (tilde transcript path,
+# helper expands tilde path, stop-gate tilde path) do not write into the real user home. The hook, helper,
 # and wrapper invocations that need tilde expansion run with HOME set to
 # this directory; every other invocation keeps the real HOME. Cleanup is
 # covered by the setup_test_dir EXIT trap because FAKE_HOME is under
@@ -57,7 +58,7 @@ FAKE_HOME="$TEST_DIR/fake-home"
 mkdir -p "$FAKE_HOME"
 
 # ----------------------------------------------------------------------
-# Mock lsof binaries used by the liveness-probe tests (AC-23, AC-24).
+# Mock lsof binaries used by the liveness-probe tests (alive task still short-circuits, dead/orphaned task pruned).
 # lsof-alive exits 0 (simulates >= 1 holder: task is running).
 # lsof-dead  exits 1 (simulates   0 holders: task is orphaned/dead).
 # ----------------------------------------------------------------------
@@ -164,13 +165,13 @@ EOF
 ### Ultimate Goal
 Exercise background-task short-circuit.
 ### Acceptance Criteria
-- AC-1: Hook reaches Codex review when no bg tasks are pending.
+- no background dispatches: Hook reaches Codex review when no bg tasks are pending.
 ## MUTABLE SECTION
 ### Plan Version: 1 (Updated: Round 0)
 #### Active Tasks
 | Task | Target AC | Status | Notes |
 |------|-----------|--------|-------|
-| Exercise stop hook | AC-1 | completed | - |
+| Exercise stop hook | no background dispatches | completed | - |
 EOF
 
     # Echo the loop dir so callers can reach state artifacts.
@@ -237,6 +238,30 @@ emit_bg_shell_launch_result() {
         }'
 }
 
+emit_bg_shell_launch_result_with_output_path() {
+    local tool_use_id="$1" bg_task_id="$2" output_path="$3" include_suffix="${4:-1}"
+    local suffix
+    if [[ "$include_suffix" == "1" ]]; then
+        suffix=". You will be notified when it completes."
+    else
+        suffix=""
+    fi
+    jq -c -n \
+        --arg id "$tool_use_id" \
+        --arg bid "$bg_task_id" \
+        --arg out "$output_path" \
+        --arg suffix "$suffix" \
+        '{
+          type:"user",
+          message:{
+            role:"user",
+            content:[{tool_use_id:$id, type:"tool_result",
+                      content:[{type:"text", text:("Command running in background with ID: " + $bid + ". Output is being written to: " + $out + $suffix)}]}]
+          },
+          toolUseResult:{backgroundTaskId:$bid}
+        }'
+}
+
 emit_task_completion_event() {
     local task_id="$1" tool_use_id="$2" status="${3:-completed}"
     local notif
@@ -250,6 +275,71 @@ emit_sdk_task_notification() {
     local task_id="$1" tool_use_id="$2" status="${3:-completed}"
     jq -c -n --arg tid "$task_id" --arg tu "$tool_use_id" --arg st "$status" \
         '{type:"system", subtype:"task_notification", task_id:$tid, tool_use_id:$tu, status:$st}'
+}
+
+# TaskStop tool_result: the harness records a top-level .toolUseResult
+# whose .message is "Successfully stopped task: <id>" and .task_id is the
+# stopped id. Many builds do NOT also emit a task_notification system
+# event for a TaskStop, so the helper must recognise this form directly
+# (source 3 in list_pending_background_task_ids).
+emit_task_stop_result() {
+    local tool_use_id="$1" task_id="$2"
+    local msg="Successfully stopped task: $task_id"
+    jq -c -n \
+        --arg id "$tool_use_id" \
+        --arg tid "$task_id" \
+        --arg msg "$msg" \
+        '{
+          type:"user",
+          message:{
+            role:"user",
+            content:[{tool_use_id:$id, type:"tool_result",
+                      content:[{type:"text", text:$msg}]}]
+          },
+          toolUseResult:{message:$msg, task_id:$tid, task_type:"local_bash"}
+        }'
+}
+
+# Variant of the TaskStop tool_result where the stopped id appears ONLY in
+# the message text, not as a separate .toolUseResult.task_id field. The
+# helper must still recognise it by parsing the message (the fallback path
+# of source 3 in list_pending_background_task_ids). The message includes a
+# parenthesised command suffix so the id-extraction regex is exercised at
+# its "( " boundary, matching the real recorded form.
+emit_task_stop_result_message_only() {
+    local tool_use_id="$1" task_id="$2"
+    local msg="Successfully stopped task: $task_id (mock command)"
+    jq -c -n \
+        --arg id "$tool_use_id" \
+        --arg msg "$msg" \
+        '{
+          type:"user",
+          message:{
+            role:"user",
+            content:[{tool_use_id:$id, type:"tool_result",
+                      content:[{type:"text", text:$msg}]}]
+          },
+          toolUseResult:{message:$msg, task_type:"local_bash"}
+        }'
+}
+
+# Unrelated tool_result whose .message is a structured value rather than a
+# string. list_pending_background_task_ids scans every .toolUseResult while
+# looking for TaskStop records; a non-string .message must not make jq's
+# `contains()` error and poison the completion pipeline under pipefail.
+emit_tool_result_nonstring_message() {
+    local tool_use_id="$1"
+    jq -c -n \
+        --arg id "$tool_use_id" \
+        '{
+          type:"user",
+          message:{
+            role:"user",
+            content:[{tool_use_id:$id, type:"tool_result",
+                      content:[{type:"text", text:"structured result"}]}]
+          },
+          toolUseResult:{message:{status:"ok", details:[1,2,3]}, status:"success"}
+        }'
 }
 
 write_transcript() {
@@ -351,173 +441,173 @@ echo "Stop Hook Background-Task Allow Tests"
 echo "=========================================="
 echo ""
 
-# ---------------- AC-1 ----------------
-echo "Test AC-1: No bg dispatches -> reaches Codex"
-AC1_REPO="$TEST_DIR/ac1"
-create_full_fixture "$AC1_REPO" > /dev/null
-AC1_TRANSCRIPT="$TRANSCRIPTS_DIR/ac1.jsonl"
-write_transcript "$AC1_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+# ---------------- no background dispatches ----------------
+echo "Test: No bg dispatches -> reaches Codex"
+NO_BG_DISPATCH_REPO="$TEST_DIR/no_bg_dispatch"
+create_full_fixture "$NO_BG_DISPATCH_REPO" > /dev/null
+NO_BG_DISPATCH_TRANSCRIPT="$TRANSCRIPTS_DIR/no_bg_dispatch.jsonl"
+write_transcript "$NO_BG_DISPATCH_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
 
-AC1_INPUT=$(jq -c -n --arg tp "$AC1_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC1_REPO" "$AC1_INPUT"
-assert_reached_codex "AC-1: transcript without bg dispatches proceeds to Codex review"
+NO_BG_DISPATCH_INPUT=$(jq -c -n --arg tp "$NO_BG_DISPATCH_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$NO_BG_DISPATCH_REPO" "$NO_BG_DISPATCH_INPUT"
+assert_reached_codex "transcript without bg dispatches proceeds to Codex review"
 
-# ---------------- AC-2 ----------------
-echo "Test AC-2: One pending background subagent -> exit 0 + systemMessage"
-AC2_REPO="$TEST_DIR/ac2"
-AC2_LOOP=$(create_full_fixture "$AC2_REPO")
-AC2_STATE="$AC2_LOOP/state.md"
-AC2_TRANSCRIPT="$TRANSCRIPTS_DIR/ac2.jsonl"
-AC2_LINE_LAUNCH=$(emit_tool_use_assistant "toolu_A" "Agent" ',"description":"x","prompt":"x"')
-AC2_LINE_RESULT=$(emit_async_agent_launch_result "toolu_A" "agent_pending_A")
-write_transcript "$AC2_TRANSCRIPT" "$AC2_LINE_LAUNCH" "$AC2_LINE_RESULT"
+# ---------------- pending background subagent ----------------
+echo "Test: One pending background subagent -> exit 0 + systemMessage"
+PENDING_SUBAGENT_REPO="$TEST_DIR/pending_subagent"
+PENDING_SUBAGENT_LOOP=$(create_full_fixture "$PENDING_SUBAGENT_REPO")
+PENDING_SUBAGENT_STATE="$PENDING_SUBAGENT_LOOP/state.md"
+PENDING_SUBAGENT_TRANSCRIPT="$TRANSCRIPTS_DIR/pending_subagent.jsonl"
+PENDING_SUBAGENT_LINE_LAUNCH=$(emit_tool_use_assistant "toolu_A" "Agent" ',"description":"x","prompt":"x"')
+PENDING_SUBAGENT_LINE_RESULT=$(emit_async_agent_launch_result "toolu_A" "agent_pending_A")
+write_transcript "$PENDING_SUBAGENT_TRANSCRIPT" "$PENDING_SUBAGENT_LINE_LAUNCH" "$PENDING_SUBAGENT_LINE_RESULT"
 
-AC2_INPUT=$(jq -c -n --arg tp "$AC2_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC2_REPO" "$AC2_INPUT"
+PENDING_SUBAGENT_INPUT=$(jq -c -n --arg tp "$PENDING_SUBAGENT_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$PENDING_SUBAGENT_REPO" "$PENDING_SUBAGENT_INPUT"
 assert_systemmessage_only \
-    "AC-2: pending subagent triggers exit 0 + systemMessage, state untouched" \
-    "$AC2_REPO" "$AC2_STATE" "1 background task"
+    "pending subagent triggers exit 0 + systemMessage, state untouched" \
+    "$PENDING_SUBAGENT_REPO" "$PENDING_SUBAGENT_STATE" "1 background task"
 
-# ---------------- AC-3 ----------------
-echo "Test AC-3: One pending background shell -> exit 0 + systemMessage"
-AC3_REPO="$TEST_DIR/ac3"
-AC3_LOOP=$(create_full_fixture "$AC3_REPO")
-AC3_STATE="$AC3_LOOP/state.md"
-AC3_TRANSCRIPT="$TRANSCRIPTS_DIR/ac3.jsonl"
-AC3_LINE_LAUNCH=$(emit_tool_use_assistant "toolu_B" "Bash" ',"command":"sleep 30"')
-AC3_LINE_RESULT=$(emit_bg_shell_launch_result "toolu_B" "shell_pending_B")
-write_transcript "$AC3_TRANSCRIPT" "$AC3_LINE_LAUNCH" "$AC3_LINE_RESULT"
+# ---------------- pending background shell ----------------
+echo "Test: One pending background shell -> exit 0 + systemMessage"
+PENDING_SHELL_REPO="$TEST_DIR/pending_shell"
+PENDING_SHELL_LOOP=$(create_full_fixture "$PENDING_SHELL_REPO")
+PENDING_SHELL_STATE="$PENDING_SHELL_LOOP/state.md"
+PENDING_SHELL_TRANSCRIPT="$TRANSCRIPTS_DIR/pending_shell.jsonl"
+PENDING_SHELL_LINE_LAUNCH=$(emit_tool_use_assistant "toolu_B" "Bash" ',"command":"sleep 30"')
+PENDING_SHELL_LINE_RESULT=$(emit_bg_shell_launch_result "toolu_B" "shell_pending_B")
+write_transcript "$PENDING_SHELL_TRANSCRIPT" "$PENDING_SHELL_LINE_LAUNCH" "$PENDING_SHELL_LINE_RESULT"
 
-AC3_INPUT=$(jq -c -n --arg tp "$AC3_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC3_REPO" "$AC3_INPUT"
+PENDING_SHELL_INPUT=$(jq -c -n --arg tp "$PENDING_SHELL_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$PENDING_SHELL_REPO" "$PENDING_SHELL_INPUT"
 assert_systemmessage_only \
-    "AC-3: pending background shell triggers exit 0 + systemMessage" \
-    "$AC3_REPO" "$AC3_STATE" "1 background task"
+    "pending background shell triggers exit 0 + systemMessage" \
+    "$PENDING_SHELL_REPO" "$PENDING_SHELL_STATE" "1 background task"
 
-# ---------------- AC-4 ----------------
-echo "Test AC-4: Launched subagent with completion notification -> reaches Codex"
-AC4_REPO="$TEST_DIR/ac4"
-create_full_fixture "$AC4_REPO" > /dev/null
-AC4_TRANSCRIPT="$TRANSCRIPTS_DIR/ac4.jsonl"
-AC4_LAUNCH=$(emit_tool_use_assistant "toolu_C" "Agent" ',"description":"x","prompt":"x"')
-AC4_RESULT=$(emit_async_agent_launch_result "toolu_C" "agent_done_C")
-AC4_COMPLETE=$(emit_task_completion_event "agent_done_C" "toolu_C" "completed")
-write_transcript "$AC4_TRANSCRIPT" "$AC4_LAUNCH" "$AC4_RESULT" "$AC4_COMPLETE"
+# ---------------- subagent launch plus completion ----------------
+echo "Test: Launched subagent with completion notification -> reaches Codex"
+SUBAGENT_COMPLETE_REPO="$TEST_DIR/subagent_complete"
+create_full_fixture "$SUBAGENT_COMPLETE_REPO" > /dev/null
+SUBAGENT_COMPLETE_TRANSCRIPT="$TRANSCRIPTS_DIR/subagent_complete.jsonl"
+SUBAGENT_COMPLETE_LAUNCH=$(emit_tool_use_assistant "toolu_C" "Agent" ',"description":"x","prompt":"x"')
+SUBAGENT_COMPLETE_RESULT=$(emit_async_agent_launch_result "toolu_C" "agent_done_C")
+SUBAGENT_COMPLETE_COMPLETE=$(emit_task_completion_event "agent_done_C" "toolu_C" "completed")
+write_transcript "$SUBAGENT_COMPLETE_TRANSCRIPT" "$SUBAGENT_COMPLETE_LAUNCH" "$SUBAGENT_COMPLETE_RESULT" "$SUBAGENT_COMPLETE_COMPLETE"
 
-AC4_INPUT=$(jq -c -n --arg tp "$AC4_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC4_REPO" "$AC4_INPUT"
-assert_reached_codex "AC-4: subagent with matching completion notification proceeds to Codex review"
+SUBAGENT_COMPLETE_INPUT=$(jq -c -n --arg tp "$SUBAGENT_COMPLETE_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$SUBAGENT_COMPLETE_REPO" "$SUBAGENT_COMPLETE_INPUT"
+assert_reached_codex "subagent with matching completion notification proceeds to Codex review"
 
-# ---------------- AC-5 ----------------
-echo "Test AC-5: 2 pending subagents + 1 pending shell -> systemMessage mentions 3"
-AC5_REPO="$TEST_DIR/ac5"
-AC5_LOOP=$(create_full_fixture "$AC5_REPO")
-AC5_STATE="$AC5_LOOP/state.md"
-AC5_TRANSCRIPT="$TRANSCRIPTS_DIR/ac5.jsonl"
-AC5_L1_LAUNCH=$(emit_tool_use_assistant "toolu_D1" "Agent" ',"description":"x","prompt":"x"')
-AC5_L1_RESULT=$(emit_async_agent_launch_result "toolu_D1" "agent_pending_D1")
-AC5_L2_LAUNCH=$(emit_tool_use_assistant "toolu_D2" "Agent" ',"description":"y","prompt":"y"')
-AC5_L2_RESULT=$(emit_async_agent_launch_result "toolu_D2" "agent_pending_D2")
-AC5_L3_LAUNCH=$(emit_tool_use_assistant "toolu_D3" "Bash" ',"command":"sleep 30"')
-AC5_L3_RESULT=$(emit_bg_shell_launch_result "toolu_D3" "shell_pending_D3")
-write_transcript "$AC5_TRANSCRIPT" \
-    "$AC5_L1_LAUNCH" "$AC5_L1_RESULT" \
-    "$AC5_L2_LAUNCH" "$AC5_L2_RESULT" \
-    "$AC5_L3_LAUNCH" "$AC5_L3_RESULT"
+# ---------------- multiple pending tasks ----------------
+echo "Test: 2 pending subagents + 1 pending shell -> systemMessage mentions 3"
+MULTI_PENDING_REPO="$TEST_DIR/multi_pending"
+MULTI_PENDING_LOOP=$(create_full_fixture "$MULTI_PENDING_REPO")
+MULTI_PENDING_STATE="$MULTI_PENDING_LOOP/state.md"
+MULTI_PENDING_TRANSCRIPT="$TRANSCRIPTS_DIR/multi_pending.jsonl"
+MULTI_PENDING_L1_LAUNCH=$(emit_tool_use_assistant "toolu_D1" "Agent" ',"description":"x","prompt":"x"')
+MULTI_PENDING_L1_RESULT=$(emit_async_agent_launch_result "toolu_D1" "agent_pending_D1")
+MULTI_PENDING_L2_LAUNCH=$(emit_tool_use_assistant "toolu_D2" "Agent" ',"description":"y","prompt":"y"')
+MULTI_PENDING_L2_RESULT=$(emit_async_agent_launch_result "toolu_D2" "agent_pending_D2")
+MULTI_PENDING_L3_LAUNCH=$(emit_tool_use_assistant "toolu_D3" "Bash" ',"command":"sleep 30"')
+MULTI_PENDING_L3_RESULT=$(emit_bg_shell_launch_result "toolu_D3" "shell_pending_D3")
+write_transcript "$MULTI_PENDING_TRANSCRIPT" \
+    "$MULTI_PENDING_L1_LAUNCH" "$MULTI_PENDING_L1_RESULT" \
+    "$MULTI_PENDING_L2_LAUNCH" "$MULTI_PENDING_L2_RESULT" \
+    "$MULTI_PENDING_L3_LAUNCH" "$MULTI_PENDING_L3_RESULT"
 
-AC5_INPUT=$(jq -c -n --arg tp "$AC5_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC5_REPO" "$AC5_INPUT"
+MULTI_PENDING_INPUT=$(jq -c -n --arg tp "$MULTI_PENDING_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$MULTI_PENDING_REPO" "$MULTI_PENDING_INPUT"
 assert_systemmessage_only \
-    "AC-5: 2 pending subagents + 1 pending shell -> systemMessage mentions '3 background task(s)'" \
-    "$AC5_REPO" "$AC5_STATE" "3 background task\\(s\\)"
+    "2 pending subagents + 1 pending shell -> systemMessage mentions '3 background task(s)'" \
+    "$MULTI_PENDING_REPO" "$MULTI_PENDING_STATE" "3 background task\\(s\\)"
 
-# ---------------- AC-6 ----------------
-echo "Test AC-6: missing transcript path -> reaches Codex (fail-closed)"
-AC6_REPO="$TEST_DIR/ac6"
-create_full_fixture "$AC6_REPO" > /dev/null
-AC6_INPUT=$(jq -c -n --arg tp "/nonexistent/file-$$.jsonl" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC6_REPO" "$AC6_INPUT"
-assert_reached_codex "AC-6: missing transcript_path proceeds to Codex review (fail-closed)"
+# ---------------- missing transcript path ----------------
+echo "Test: missing transcript path -> reaches Codex (fail-closed)"
+MISSING_TRANSCRIPT_REPO="$TEST_DIR/missing_transcript"
+create_full_fixture "$MISSING_TRANSCRIPT_REPO" > /dev/null
+MISSING_TRANSCRIPT_INPUT=$(jq -c -n --arg tp "/nonexistent/file-$$.jsonl" '{transcript_path:$tp}')
+run_stop_hook_with_input "$MISSING_TRANSCRIPT_REPO" "$MISSING_TRANSCRIPT_INPUT"
+assert_reached_codex "missing transcript_path proceeds to Codex review (fail-closed)"
 
 # Also: empty transcript_path field
-AC6B_REPO="$TEST_DIR/ac6b"
-create_full_fixture "$AC6B_REPO" > /dev/null
-AC6B_INPUT='{"transcript_path":""}'
-run_stop_hook_with_input "$AC6B_REPO" "$AC6B_INPUT"
-assert_reached_codex "AC-6b: empty transcript_path string proceeds to Codex review"
+EMPTY_TRANSCRIPT_PATH_REPO="$TEST_DIR/empty_transcript_path"
+create_full_fixture "$EMPTY_TRANSCRIPT_PATH_REPO" > /dev/null
+EMPTY_TRANSCRIPT_PATH_INPUT='{"transcript_path":""}'
+run_stop_hook_with_input "$EMPTY_TRANSCRIPT_PATH_REPO" "$EMPTY_TRANSCRIPT_PATH_INPUT"
+assert_reached_codex "empty transcript_path string proceeds to Codex review"
 
 # And: no transcript_path key at all
-AC6C_REPO="$TEST_DIR/ac6c"
-create_full_fixture "$AC6C_REPO" > /dev/null
-AC6C_INPUT='{}'
-run_stop_hook_with_input "$AC6C_REPO" "$AC6C_INPUT"
-assert_reached_codex "AC-6c: hook input with no transcript_path proceeds to Codex review"
+ABSENT_TRANSCRIPT_PATH_REPO="$TEST_DIR/absent_transcript_path"
+create_full_fixture "$ABSENT_TRANSCRIPT_PATH_REPO" > /dev/null
+ABSENT_TRANSCRIPT_PATH_INPUT='{}'
+run_stop_hook_with_input "$ABSENT_TRANSCRIPT_PATH_REPO" "$ABSENT_TRANSCRIPT_PATH_INPUT"
+assert_reached_codex "hook input with no transcript_path proceeds to Codex review"
 
-# ---------------- AC-7 ----------------
-echo "Test AC-7: No active loop -> exit 0, no systemMessage, no Codex"
-AC7_REPO="$TEST_DIR/ac7"
-create_empty_project "$AC7_REPO"
-AC7_TRANSCRIPT="$TRANSCRIPTS_DIR/ac7.jsonl"
-AC7_LAUNCH=$(emit_tool_use_assistant "toolu_E" "Agent" ',"description":"x","prompt":"x"')
-AC7_RESULT=$(emit_async_agent_launch_result "toolu_E" "agent_pending_E")
-write_transcript "$AC7_TRANSCRIPT" "$AC7_LAUNCH" "$AC7_RESULT"
-AC7_INPUT=$(jq -c -n --arg tp "$AC7_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC7_REPO" "$AC7_INPUT"
+# ---------------- no active loop ----------------
+echo "Test: No active loop -> exit 0, no systemMessage, no Codex"
+NO_ACTIVE_LOOP_REPO="$TEST_DIR/no_active_loop"
+create_empty_project "$NO_ACTIVE_LOOP_REPO"
+NO_ACTIVE_LOOP_TRANSCRIPT="$TRANSCRIPTS_DIR/no_active_loop.jsonl"
+NO_ACTIVE_LOOP_LAUNCH=$(emit_tool_use_assistant "toolu_E" "Agent" ',"description":"x","prompt":"x"')
+NO_ACTIVE_LOOP_RESULT=$(emit_async_agent_launch_result "toolu_E" "agent_pending_E")
+write_transcript "$NO_ACTIVE_LOOP_TRANSCRIPT" "$NO_ACTIVE_LOOP_LAUNCH" "$NO_ACTIVE_LOOP_RESULT"
+NO_ACTIVE_LOOP_INPUT=$(jq -c -n --arg tp "$NO_ACTIVE_LOOP_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$NO_ACTIVE_LOOP_REPO" "$NO_ACTIVE_LOOP_INPUT"
 
-AC7_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
-if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && [[ -z "$AC7_SYS_MSG" ]]; then
-    pass "AC-7: no active loop takes original exit-0 path without systemMessage"
+NO_ACTIVE_LOOP_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && [[ -z "$NO_ACTIVE_LOOP_SYS_MSG" ]]; then
+    pass "no active loop takes original exit-0 path without systemMessage"
 else
-    fail "AC-7: no active loop takes original exit-0 path without systemMessage" \
+    fail "no active loop takes original exit-0 path without systemMessage" \
         "exit 0, no Codex marker, no systemMessage" \
-        "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), systemMessage='$AC7_SYS_MSG'; output: $RUN_OUTPUT"
+        "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), systemMessage='$NO_ACTIVE_LOOP_SYS_MSG'; output: $RUN_OUTPUT"
 fi
 
-# ---------------- AC-8 ----------------
-echo "Test AC-8: Finalize phase + pending bg -> exit 0 + systemMessage"
-AC8_REPO="$TEST_DIR/ac8"
-AC8_LOOP=$(create_full_fixture "$AC8_REPO" true)
-AC8_STATE="$AC8_LOOP/finalize-state.md"
-AC8_TRANSCRIPT="$TRANSCRIPTS_DIR/ac8.jsonl"
-AC8_LAUNCH=$(emit_tool_use_assistant "toolu_F" "Agent" ',"description":"x","prompt":"x"')
-AC8_RESULT=$(emit_async_agent_launch_result "toolu_F" "agent_pending_F")
-write_transcript "$AC8_TRANSCRIPT" "$AC8_LAUNCH" "$AC8_RESULT"
-AC8_INPUT=$(jq -c -n --arg tp "$AC8_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC8_REPO" "$AC8_INPUT"
+# ---------------- finalize phase with pending bg ----------------
+echo "Test: Finalize phase + pending bg -> exit 0 + systemMessage"
+FINALIZE_PENDING_REPO="$TEST_DIR/finalize_pending"
+FINALIZE_PENDING_LOOP=$(create_full_fixture "$FINALIZE_PENDING_REPO" true)
+FINALIZE_PENDING_STATE="$FINALIZE_PENDING_LOOP/finalize-state.md"
+FINALIZE_PENDING_TRANSCRIPT="$TRANSCRIPTS_DIR/finalize_pending.jsonl"
+FINALIZE_PENDING_LAUNCH=$(emit_tool_use_assistant "toolu_F" "Agent" ',"description":"x","prompt":"x"')
+FINALIZE_PENDING_RESULT=$(emit_async_agent_launch_result "toolu_F" "agent_pending_F")
+write_transcript "$FINALIZE_PENDING_TRANSCRIPT" "$FINALIZE_PENDING_LAUNCH" "$FINALIZE_PENDING_RESULT"
+FINALIZE_PENDING_INPUT=$(jq -c -n --arg tp "$FINALIZE_PENDING_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$FINALIZE_PENDING_REPO" "$FINALIZE_PENDING_INPUT"
 assert_systemmessage_only \
-    "AC-8: finalize phase with pending bg task -> exit 0 + systemMessage" \
-    "$AC8_REPO" "$AC8_STATE" "1 background task"
+    "finalize phase with pending bg task -> exit 0 + systemMessage" \
+    "$FINALIZE_PENDING_REPO" "$FINALIZE_PENDING_STATE" "1 background task"
 
-# ---------------- AC-9 ----------------
-echo "Test AC-9: rlcr-stop-gate.sh forwards transcript_path to hook"
-AC9_REPO="$TEST_DIR/ac9"
-create_full_fixture "$AC9_REPO" > /dev/null
-AC9_TRANSCRIPT="$TRANSCRIPTS_DIR/ac9.jsonl"
-AC9_LAUNCH=$(emit_tool_use_assistant "toolu_G" "Agent" ',"description":"x","prompt":"x"')
-AC9_RESULT=$(emit_async_agent_launch_result "toolu_G" "agent_pending_G")
-write_transcript "$AC9_TRANSCRIPT" "$AC9_LAUNCH" "$AC9_RESULT"
+# ---------------- invocation via rlcr-stop-gate.sh ----------------
+echo "Test: rlcr-stop-gate.sh forwards transcript_path to hook"
+VIA_STOP_GATE_REPO="$TEST_DIR/via_stop_gate"
+create_full_fixture "$VIA_STOP_GATE_REPO" > /dev/null
+VIA_STOP_GATE_TRANSCRIPT="$TRANSCRIPTS_DIR/via_stop_gate.jsonl"
+VIA_STOP_GATE_LAUNCH=$(emit_tool_use_assistant "toolu_G" "Agent" ',"description":"x","prompt":"x"')
+VIA_STOP_GATE_RESULT=$(emit_async_agent_launch_result "toolu_G" "agent_pending_G")
+write_transcript "$VIA_STOP_GATE_TRANSCRIPT" "$VIA_STOP_GATE_LAUNCH" "$VIA_STOP_GATE_RESULT"
 
-AC9_OUT="$AC9_REPO/gate-out.txt"
+VIA_STOP_GATE_OUT="$VIA_STOP_GATE_REPO/gate-out.txt"
 # Pass --project-root explicitly so an inherited CLAUDE_PROJECT_DIR
 # from the outer runner cannot redirect the gate to the outer repo.
 set +e
 (
-    cd "$AC9_REPO"
-    "$GATE_SCRIPT" --project-root "$AC9_REPO" --transcript-path "$AC9_TRANSCRIPT"
-) > "$AC9_OUT" 2>&1
-AC9_EXIT=$?
+    cd "$VIA_STOP_GATE_REPO"
+    "$GATE_SCRIPT" --project-root "$VIA_STOP_GATE_REPO" --transcript-path "$VIA_STOP_GATE_TRANSCRIPT"
+) > "$VIA_STOP_GATE_OUT" 2>&1
+VIA_STOP_GATE_EXIT=$?
 set -e
 
-if [[ "$AC9_EXIT" -eq 0 ]] && grep -q "^ALLOW:" "$AC9_OUT"; then
-    pass "AC-9: rlcr-stop-gate.sh exits 0 with ALLOW when bg tasks are pending"
+if [[ "$VIA_STOP_GATE_EXIT" -eq 0 ]] && grep -q "^ALLOW:" "$VIA_STOP_GATE_OUT"; then
+    pass "rlcr-stop-gate.sh exits 0 with ALLOW when bg tasks are pending"
 else
-    AC9_BODY=$(cat "$AC9_OUT" 2>/dev/null || true)
-    fail "AC-9: rlcr-stop-gate.sh exits 0 with ALLOW when bg tasks are pending" \
+    VIA_STOP_GATE_BODY=$(cat "$VIA_STOP_GATE_OUT" 2>/dev/null || true)
+    fail "rlcr-stop-gate.sh exits 0 with ALLOW when bg tasks are pending" \
         "exit 0 and output containing ALLOW:" \
-        "exit $AC9_EXIT; output: $AC9_BODY"
+        "exit $VIA_STOP_GATE_EXIT; output: $VIA_STOP_GATE_BODY"
 fi
 
-# ---------------- AC-10 / AC-10b / AC-10c ----------------
+# ---------------- tilde transcript path / helper expands tilde path / stop-gate tilde path ----------------
 # Regression: real sessions pass transcript_path as "~/.claude/projects/...".
 # Without tilde expansion the file check `[[ -f "~/..." ]]` is always false,
 # so the short-circuit silently misses pending background tasks.
@@ -526,101 +616,101 @@ fi
 # remain portable on sandboxed or read-only-HOME environments. Only the
 # specific hook / helper / wrapper invocations that need tilde expansion
 # run with HOME=$FAKE_HOME; the rest of the suite keeps the real HOME.
-echo "Test AC-10: '~/...' transcript path still triggers short-circuit"
-AC10_REPO="$TEST_DIR/ac10"
-AC10_LOOP=$(create_full_fixture "$AC10_REPO")
-AC10_STATE="$AC10_LOOP/state.md"
+echo "Test: '~/...' transcript path still triggers short-circuit"
+TILDE_PATH_REPO="$TEST_DIR/tilde_path"
+TILDE_PATH_LOOP=$(create_full_fixture "$TILDE_PATH_REPO")
+TILDE_PATH_STATE="$TILDE_PATH_LOOP/state.md"
 
 mkdir -p "$FAKE_HOME/session-data"
-AC10_TRANSCRIPT="$FAKE_HOME/session-data/ac10.jsonl"
-AC10_LAUNCH=$(emit_tool_use_assistant "toolu_H" "Agent" ',"description":"x","prompt":"x"')
-AC10_RESULT=$(emit_async_agent_launch_result "toolu_H" "agent_pending_H")
-write_transcript "$AC10_TRANSCRIPT" "$AC10_LAUNCH" "$AC10_RESULT"
+TILDE_PATH_TRANSCRIPT="$FAKE_HOME/session-data/tilde_path.jsonl"
+TILDE_PATH_LAUNCH=$(emit_tool_use_assistant "toolu_H" "Agent" ',"description":"x","prompt":"x"')
+TILDE_PATH_RESULT=$(emit_async_agent_launch_result "toolu_H" "agent_pending_H")
+write_transcript "$TILDE_PATH_TRANSCRIPT" "$TILDE_PATH_LAUNCH" "$TILDE_PATH_RESULT"
 
 # Build the tilde-form string literally. Do NOT let the shell expand "~".
-AC10_TILDE_PATH="~/session-data/ac10.jsonl"
-AC10_INPUT=$(jq -c -n --arg tp "$AC10_TILDE_PATH" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC10_REPO" "$AC10_INPUT" "$FAKE_HOME"
+TILDE_PATH_TILDE_PATH="~/session-data/tilde_path.jsonl"
+TILDE_PATH_INPUT=$(jq -c -n --arg tp "$TILDE_PATH_TILDE_PATH" '{transcript_path:$tp}')
+run_stop_hook_with_input "$TILDE_PATH_REPO" "$TILDE_PATH_INPUT" "$FAKE_HOME"
 assert_systemmessage_only \
-    "AC-10: '~/'-prefixed transcript_path is expanded and short-circuits on pending bg" \
-    "$AC10_REPO" "$AC10_STATE" "1 background task"
+    "'~/'-prefixed transcript_path is expanded and short-circuits on pending bg" \
+    "$TILDE_PATH_REPO" "$TILDE_PATH_STATE" "1 background task"
 
 # Also prove the helper works directly against a "~/..." argument under a
 # fake HOME. Avoids masking a helper regression behind the hook's own
 # normalization.
-AC10_HELPER_OUT=$(
-    cd "$AC10_REPO"
+TILDE_PATH_HELPER_OUT=$(
+    cd "$TILDE_PATH_REPO"
     HOME="$FAKE_HOME"
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    list_pending_background_task_ids "$AC10_TILDE_PATH" 2>/dev/null | sort -u
+    list_pending_background_task_ids "$TILDE_PATH_TILDE_PATH" 2>/dev/null | sort -u
 )
-if printf '%s\n' "$AC10_HELPER_OUT" | grep -qx 'agent_pending_H'; then
-    pass "AC-10b: list_pending_background_task_ids expands '~/...' directly"
+if printf '%s\n' "$TILDE_PATH_HELPER_OUT" | grep -qx 'agent_pending_H'; then
+    pass "list_pending_background_task_ids expands '~/...' directly"
 else
-    fail "AC-10b: list_pending_background_task_ids expands '~/...' directly" \
-        "output containing 'agent_pending_H'" "$AC10_HELPER_OUT"
+    fail "list_pending_background_task_ids expands '~/...' directly" \
+        "output containing 'agent_pending_H'" "$TILDE_PATH_HELPER_OUT"
 fi
 
 # Verify the gate wrapper path with a tilde-form --transcript-path also
-# reaches the short-circuit. AC-9 uses an absolute transcript path; this
+# reaches the short-circuit. invocation via rlcr-stop-gate.sh uses an absolute transcript path; this
 # covers the same code path with a "~/..." form.
 #
-# Fresh fixture so the repo has no prior bg-pending.marker (AC-10 left
+# Fresh fixture so the repo has no prior bg-pending.marker (tilde transcript path left
 # one behind). The ambiguous-caller guard in the hook only silences the
 # wrapper when a marker already exists; a clean repo falls through to
 # the normal short-circuit so the systemMessage surfaces in the wrapper
 # output.
-echo "Test AC-10c: rlcr-stop-gate.sh with '~/...' --transcript-path -> ALLOW"
-AC10C_REPO="$TEST_DIR/ac10c"
-create_full_fixture "$AC10C_REPO" > /dev/null
+echo "Test: rlcr-stop-gate.sh with '~/...' --transcript-path -> ALLOW"
+TILDE_PATH_STOP_GATE_REPO="$TEST_DIR/tilde_path_stop_gate"
+create_full_fixture "$TILDE_PATH_STOP_GATE_REPO" > /dev/null
 mkdir -p "$FAKE_HOME/session-data-c"
-AC10C_TRANSCRIPT="$FAKE_HOME/session-data-c/ac10c.jsonl"
-AC10C_LAUNCH=$(emit_tool_use_assistant "toolu_H2" "Agent" ',"description":"x","prompt":"x"')
-AC10C_RESULT=$(emit_async_agent_launch_result "toolu_H2" "agent_pending_H2")
-write_transcript "$AC10C_TRANSCRIPT" "$AC10C_LAUNCH" "$AC10C_RESULT"
-AC10C_TILDE_PATH="~/session-data-c/ac10c.jsonl"
+TILDE_PATH_STOP_GATE_TRANSCRIPT="$FAKE_HOME/session-data-c/tilde_path_stop_gate.jsonl"
+TILDE_PATH_STOP_GATE_LAUNCH=$(emit_tool_use_assistant "toolu_H2" "Agent" ',"description":"x","prompt":"x"')
+TILDE_PATH_STOP_GATE_RESULT=$(emit_async_agent_launch_result "toolu_H2" "agent_pending_H2")
+write_transcript "$TILDE_PATH_STOP_GATE_TRANSCRIPT" "$TILDE_PATH_STOP_GATE_LAUNCH" "$TILDE_PATH_STOP_GATE_RESULT"
+TILDE_PATH_STOP_GATE_TILDE_PATH="~/session-data-c/tilde_path_stop_gate.jsonl"
 
-AC10C_OUT="$TEST_DIR/ac10c-out.txt"
+TILDE_PATH_STOP_GATE_OUT="$TEST_DIR/tilde_path_stop_gate-out.txt"
 set +e
 (
-    cd "$AC10C_REPO"
+    cd "$TILDE_PATH_STOP_GATE_REPO"
     HOME="$FAKE_HOME" "$GATE_SCRIPT" \
-        --project-root "$AC10C_REPO" \
-        --transcript-path "$AC10C_TILDE_PATH"
-) > "$AC10C_OUT" 2>&1
-AC10C_EXIT=$?
+        --project-root "$TILDE_PATH_STOP_GATE_REPO" \
+        --transcript-path "$TILDE_PATH_STOP_GATE_TILDE_PATH"
+) > "$TILDE_PATH_STOP_GATE_OUT" 2>&1
+TILDE_PATH_STOP_GATE_EXIT=$?
 set -e
 
-if [[ "$AC10C_EXIT" -eq 0 ]] \
-   && grep -q "^ALLOW:" "$AC10C_OUT" \
-   && grep -q "background task" "$AC10C_OUT"; then
-    pass "AC-10c: rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage"
+if [[ "$TILDE_PATH_STOP_GATE_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$TILDE_PATH_STOP_GATE_OUT" \
+   && grep -q "background task" "$TILDE_PATH_STOP_GATE_OUT"; then
+    pass "rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage"
 else
-    AC10C_BODY=$(cat "$AC10C_OUT" 2>/dev/null || true)
-    fail "AC-10c: rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage" \
+    TILDE_PATH_STOP_GATE_BODY=$(cat "$TILDE_PATH_STOP_GATE_OUT" 2>/dev/null || true)
+    fail "rlcr-stop-gate.sh expands '~/...' and emits ALLOW with systemMessage" \
         "exit 0 + output containing ALLOW: and 'background task'" \
-        "exit $AC10C_EXIT; output: $AC10C_BODY"
+        "exit $TILDE_PATH_STOP_GATE_EXIT; output: $TILDE_PATH_STOP_GATE_BODY"
 fi
 
-# ---------------- AC-11 / AC-11b ----------------
+# ---------------- cross-session bg-pending marker / cross-session without marker ----------------
 # Cross-session parked-loop guard: when a loop in the repo carries the
 # bg-pending.marker and its stored session_id does not match the caller,
 # the stop hook must exit 0 with a dedicated "parked by another session"
 # systemMessage and leave every on-disk artifact intact. The current
 # session has no authority to advance or cleanup a foreign parked loop
 # because its transcript cannot observe the other session's bg task.
-echo "Test AC-11: cross-session bg-pending.marker emits 'parked' systemMessage"
-AC11_REPO="$TEST_DIR/ac11"
-AC11_LOOP=$(create_full_fixture "$AC11_REPO")
-AC11_STATE="$AC11_LOOP/state.md"
-AC11_MARKER="$AC11_LOOP/bg-pending.marker"
+echo "Test: cross-session bg-pending.marker emits 'parked' systemMessage"
+CROSS_SESSION_MARKER_REPO="$TEST_DIR/cross_session_marker"
+CROSS_SESSION_MARKER_LOOP=$(create_full_fixture "$CROSS_SESSION_MARKER_REPO")
+CROSS_SESSION_MARKER_STATE="$CROSS_SESSION_MARKER_LOOP/state.md"
+CROSS_SESSION_MARKER_MARKER="$CROSS_SESSION_MARKER_LOOP/bg-pending.marker"
 
 # Override state.md with an explicit stored session_id so find_active_loop
 # sees a real mismatch when we later pass a different session_id.
-AC11_BRANCH=$(git -C "$AC11_REPO" rev-parse --abbrev-ref HEAD)
-AC11_BASE_COMMIT=$(git -C "$AC11_REPO" rev-parse HEAD)
-cat > "$AC11_STATE" <<EOF_AC11
+CROSS_SESSION_MARKER_BRANCH=$(git -C "$CROSS_SESSION_MARKER_REPO" rev-parse --abbrev-ref HEAD)
+CROSS_SESSION_MARKER_BASE_COMMIT=$(git -C "$CROSS_SESSION_MARKER_REPO" rev-parse HEAD)
+cat > "$CROSS_SESSION_MARKER_STATE" <<EOF_CROSS_SESSION_MARKER
 ---
 current_round: 0
 max_iterations: 42
@@ -631,52 +721,52 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC11_BRANCH
-base_branch: $AC11_BRANCH
-base_commit: $AC11_BASE_COMMIT
+start_branch: $CROSS_SESSION_MARKER_BRANCH
+base_branch: $CROSS_SESSION_MARKER_BRANCH
+base_commit: $CROSS_SESSION_MARKER_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_alpha
 ---
-EOF_AC11
-AC11_STATE_HASH_BEFORE=$(sha256sum "$AC11_STATE" | awk '{print $1}')
+EOF_CROSS_SESSION_MARKER
+CROSS_SESSION_MARKER_STATE_HASH_BEFORE=$(sha256sum "$CROSS_SESSION_MARKER_STATE" | awk '{print $1}')
 
 # Simulate the state left by a previous session that took the short-circuit.
-: > "$AC11_MARKER"
+: > "$CROSS_SESSION_MARKER_MARKER"
 
-AC11_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11.jsonl"
-AC11_LAUNCH=$(emit_tool_use_assistant "toolu_I" "Agent" ',"description":"x","prompt":"x"')
-AC11_RESULT=$(emit_async_agent_launch_result "toolu_I" "agent_pending_I")
-write_transcript "$AC11_TRANSCRIPT" "$AC11_LAUNCH" "$AC11_RESULT"
+CROSS_SESSION_MARKER_TRANSCRIPT="$TRANSCRIPTS_DIR/cross_session_marker.jsonl"
+CROSS_SESSION_MARKER_LAUNCH=$(emit_tool_use_assistant "toolu_I" "Agent" ',"description":"x","prompt":"x"')
+CROSS_SESSION_MARKER_RESULT=$(emit_async_agent_launch_result "toolu_I" "agent_pending_I")
+write_transcript "$CROSS_SESSION_MARKER_TRANSCRIPT" "$CROSS_SESSION_MARKER_LAUNCH" "$CROSS_SESSION_MARKER_RESULT"
 
-AC11_INPUT=$(jq -c -n --arg tp "$AC11_TRANSCRIPT" \
+CROSS_SESSION_MARKER_INPUT=$(jq -c -n --arg tp "$CROSS_SESSION_MARKER_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_beta"}')
-run_stop_hook_with_input "$AC11_REPO" "$AC11_INPUT"
-AC11_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
-AC11_STATE_HASH_AFTER=$(sha256sum "$AC11_STATE" | awk '{print $1}')
+run_stop_hook_with_input "$CROSS_SESSION_MARKER_REPO" "$CROSS_SESSION_MARKER_INPUT"
+CROSS_SESSION_MARKER_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+CROSS_SESSION_MARKER_STATE_HASH_AFTER=$(sha256sum "$CROSS_SESSION_MARKER_STATE" | awk '{print $1}')
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
    && [[ ! -f "$RUN_MARKER" ]] \
-   && [[ -f "$AC11_MARKER" ]] \
-   && [[ "$AC11_STATE_HASH_BEFORE" == "$AC11_STATE_HASH_AFTER" ]] \
-   && printf '%s' "$AC11_SYS_MSG" | grep -qi "parked"; then
-    pass "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched"
+   && [[ -f "$CROSS_SESSION_MARKER_MARKER" ]] \
+   && [[ "$CROSS_SESSION_MARKER_STATE_HASH_BEFORE" == "$CROSS_SESSION_MARKER_STATE_HASH_AFTER" ]] \
+   && printf '%s' "$CROSS_SESSION_MARKER_SYS_MSG" | grep -qi "parked"; then
+    pass "cross-session stop exits with 'parked' systemMessage; marker and session_id untouched"
 else
-    fail "AC-11: cross-session stop exits with 'parked' systemMessage; marker and session_id untouched" \
+    fail "cross-session stop exits with 'parked' systemMessage; marker and session_id untouched" \
         "exit 0 + systemMessage matches /parked/ + marker stays + state.md byte-identical + no Codex" \
-        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AC11_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AC11_STATE_HASH_BEFORE" == "$AC11_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AC11_SYS_MSG'; output: $RUN_OUTPUT"
+        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$CROSS_SESSION_MARKER_MARKER" && echo present || echo missing), state_unchanged=$([[ "$CROSS_SESSION_MARKER_STATE_HASH_BEFORE" == "$CROSS_SESSION_MARKER_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$CROSS_SESSION_MARKER_SYS_MSG'; output: $RUN_OUTPUT"
 fi
 
 # Negative counterpart: same session mismatch but NO marker must still
 # reject the loop (preserving the existing session-bound isolation when
 # the loop was not explicitly parked).
-echo "Test AC-11b: cross-session without marker is still rejected"
-AC11B_REPO="$TEST_DIR/ac11b"
-AC11B_LOOP=$(create_full_fixture "$AC11B_REPO")
-AC11B_STATE="$AC11B_LOOP/state.md"
-AC11B_BRANCH=$(git -C "$AC11B_REPO" rev-parse --abbrev-ref HEAD)
-AC11B_BASE_COMMIT=$(git -C "$AC11B_REPO" rev-parse HEAD)
-cat > "$AC11B_STATE" <<EOF_AC11B
+echo "Test: cross-session without marker is still rejected"
+CROSS_SESSION_NO_MARKER_REPO="$TEST_DIR/cross_session_no_marker"
+CROSS_SESSION_NO_MARKER_LOOP=$(create_full_fixture "$CROSS_SESSION_NO_MARKER_REPO")
+CROSS_SESSION_NO_MARKER_STATE="$CROSS_SESSION_NO_MARKER_LOOP/state.md"
+CROSS_SESSION_NO_MARKER_BRANCH=$(git -C "$CROSS_SESSION_NO_MARKER_REPO" rev-parse --abbrev-ref HEAD)
+CROSS_SESSION_NO_MARKER_BASE_COMMIT=$(git -C "$CROSS_SESSION_NO_MARKER_REPO" rev-parse HEAD)
+cat > "$CROSS_SESSION_NO_MARKER_STATE" <<EOF_CROSS_SESSION_NO_MARKER
 ---
 current_round: 0
 max_iterations: 42
@@ -687,70 +777,70 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC11B_BRANCH
-base_branch: $AC11B_BRANCH
-base_commit: $AC11B_BASE_COMMIT
+start_branch: $CROSS_SESSION_NO_MARKER_BRANCH
+base_branch: $CROSS_SESSION_NO_MARKER_BRANCH
+base_commit: $CROSS_SESSION_NO_MARKER_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_alpha
 ---
-EOF_AC11B
-# Intentionally NO marker in AC11B_LOOP.
+EOF_CROSS_SESSION_NO_MARKER
+# Intentionally NO marker in CROSS_SESSION_NO_MARKER_LOOP.
 
-AC11B_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11b.jsonl"
-AC11B_LAUNCH=$(emit_tool_use_assistant "toolu_J" "Agent" ',"description":"x","prompt":"x"')
-AC11B_RESULT=$(emit_async_agent_launch_result "toolu_J" "agent_pending_J")
-write_transcript "$AC11B_TRANSCRIPT" "$AC11B_LAUNCH" "$AC11B_RESULT"
+CROSS_SESSION_NO_MARKER_TRANSCRIPT="$TRANSCRIPTS_DIR/cross_session_no_marker.jsonl"
+CROSS_SESSION_NO_MARKER_LAUNCH=$(emit_tool_use_assistant "toolu_J" "Agent" ',"description":"x","prompt":"x"')
+CROSS_SESSION_NO_MARKER_RESULT=$(emit_async_agent_launch_result "toolu_J" "agent_pending_J")
+write_transcript "$CROSS_SESSION_NO_MARKER_TRANSCRIPT" "$CROSS_SESSION_NO_MARKER_LAUNCH" "$CROSS_SESSION_NO_MARKER_RESULT"
 
-AC11B_INPUT=$(jq -c -n --arg tp "$AC11B_TRANSCRIPT" \
+CROSS_SESSION_NO_MARKER_INPUT=$(jq -c -n --arg tp "$CROSS_SESSION_NO_MARKER_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_beta"}')
-run_stop_hook_with_input "$AC11B_REPO" "$AC11B_INPUT"
-AC11B_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
-if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && [[ -z "$AC11B_SYS_MSG" ]]; then
-    pass "AC-11b: cross-session without marker keeps existing isolation (no adoption)"
+run_stop_hook_with_input "$CROSS_SESSION_NO_MARKER_REPO" "$CROSS_SESSION_NO_MARKER_INPUT"
+CROSS_SESSION_NO_MARKER_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ ! -f "$RUN_MARKER" ]] && [[ -z "$CROSS_SESSION_NO_MARKER_SYS_MSG" ]]; then
+    pass "cross-session without marker keeps existing isolation (no adoption)"
 else
-    fail "AC-11b: cross-session without marker keeps existing isolation (no adoption)" \
+    fail "cross-session without marker keeps existing isolation (no adoption)" \
         "exit 0, no Codex marker, no systemMessage" \
-        "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), systemMessage='$AC11B_SYS_MSG'; output: $RUN_OUTPUT"
+        "exit $RUN_EXIT_CODE, marker=$(test -f "$RUN_MARKER" && echo present || echo missing), systemMessage='$CROSS_SESSION_NO_MARKER_SYS_MSG'; output: $RUN_OUTPUT"
 fi
 
-# AC-11c: short-circuit should actually write bg-pending.marker so the
-# adoption path in AC-11 is reachable from real usage (not only from
+# short-circuit should actually write bg-pending.marker so the
+# adoption path in cross-session bg-pending marker is reachable from real usage (not only from
 # synthetic test setup).
-echo "Test AC-11c: short-circuit writes bg-pending.marker"
-AC11C_REPO="$TEST_DIR/ac11c"
-AC11C_LOOP=$(create_full_fixture "$AC11C_REPO")
-AC11C_MARKER="$AC11C_LOOP/bg-pending.marker"
-[[ -e "$AC11C_MARKER" ]] && rm -f "$AC11C_MARKER"
+echo "Test: short-circuit writes bg-pending.marker"
+SHORT_CIRCUIT_WRITES_MARKER_REPO="$TEST_DIR/short_circuit_writes_marker"
+SHORT_CIRCUIT_WRITES_MARKER_LOOP=$(create_full_fixture "$SHORT_CIRCUIT_WRITES_MARKER_REPO")
+SHORT_CIRCUIT_WRITES_MARKER_MARKER="$SHORT_CIRCUIT_WRITES_MARKER_LOOP/bg-pending.marker"
+[[ -e "$SHORT_CIRCUIT_WRITES_MARKER_MARKER" ]] && rm -f "$SHORT_CIRCUIT_WRITES_MARKER_MARKER"
 
-AC11C_TRANSCRIPT="$TRANSCRIPTS_DIR/ac11c.jsonl"
-AC11C_LAUNCH=$(emit_tool_use_assistant "toolu_K" "Agent" ',"description":"x","prompt":"x"')
-AC11C_RESULT=$(emit_async_agent_launch_result "toolu_K" "agent_pending_K")
-write_transcript "$AC11C_TRANSCRIPT" "$AC11C_LAUNCH" "$AC11C_RESULT"
+SHORT_CIRCUIT_WRITES_MARKER_TRANSCRIPT="$TRANSCRIPTS_DIR/short_circuit_writes_marker.jsonl"
+SHORT_CIRCUIT_WRITES_MARKER_LAUNCH=$(emit_tool_use_assistant "toolu_K" "Agent" ',"description":"x","prompt":"x"')
+SHORT_CIRCUIT_WRITES_MARKER_RESULT=$(emit_async_agent_launch_result "toolu_K" "agent_pending_K")
+write_transcript "$SHORT_CIRCUIT_WRITES_MARKER_TRANSCRIPT" "$SHORT_CIRCUIT_WRITES_MARKER_LAUNCH" "$SHORT_CIRCUIT_WRITES_MARKER_RESULT"
 
-AC11C_INPUT=$(jq -c -n --arg tp "$AC11C_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC11C_REPO" "$AC11C_INPUT"
-if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -f "$AC11C_MARKER" ]]; then
-    pass "AC-11c: short-circuit path writes bg-pending.marker into loop dir"
+SHORT_CIRCUIT_WRITES_MARKER_INPUT=$(jq -c -n --arg tp "$SHORT_CIRCUIT_WRITES_MARKER_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$SHORT_CIRCUIT_WRITES_MARKER_REPO" "$SHORT_CIRCUIT_WRITES_MARKER_INPUT"
+if [[ "$RUN_EXIT_CODE" -eq 0 ]] && [[ -f "$SHORT_CIRCUIT_WRITES_MARKER_MARKER" ]]; then
+    pass "short-circuit path writes bg-pending.marker into loop dir"
 else
-    fail "AC-11c: short-circuit path writes bg-pending.marker into loop dir" \
+    fail "short-circuit path writes bg-pending.marker into loop dir" \
         "exit 0 and bg-pending.marker present" \
-        "exit $RUN_EXIT_CODE, marker=$(test -f "$AC11C_MARKER" && echo present || echo missing); output: $RUN_OUTPUT"
+        "exit $RUN_EXIT_CODE, marker=$(test -f "$SHORT_CIRCUIT_WRITES_MARKER_MARKER" && echo present || echo missing); output: $RUN_OUTPUT"
 fi
 
-# ---------------- AC-12 ----------------
+# ---------------- find_active_loop prefers exact session ----------------
 # Session isolation under multiple concurrent RLCR loops: when the caller's
 # own exact-match dir exists in the listing, find_active_loop must return
 # it even if a newer sibling dir (belonging to another session) also has a
 # bg-pending.marker. The marker fallback is only for orphan recovery when
 # no exact match exists.
-echo "Test AC-12: find_active_loop prefers exact session match over marker"
-AC12_BASE="$TEST_DIR/ac12-loops"
-mkdir -p "$AC12_BASE/2026-03-02_00-00-00"
-mkdir -p "$AC12_BASE/2026-03-01_00-00-00"
+echo "Test: find_active_loop prefers exact session match over marker"
+FIND_LOOP_EXACT_SESSION_BASE="$TEST_DIR/find_loop_exact_session-loops"
+mkdir -p "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-02_00-00-00"
+mkdir -p "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-01_00-00-00"
 
-cat > "$AC12_BASE/2026-03-02_00-00-00/state.md" <<'EOF_AC12_NEWER'
+cat > "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-02_00-00-00/state.md" <<'EOF_FIND_LOOP_EXACT_SESSION_NEWER'
 ---
 current_round: 0
 max_iterations: 42
@@ -758,10 +848,10 @@ codex_model: gpt-5.5
 codex_effort: high
 session_id: session_foreign
 ---
-EOF_AC12_NEWER
-: > "$AC12_BASE/2026-03-02_00-00-00/bg-pending.marker"
+EOF_FIND_LOOP_EXACT_SESSION_NEWER
+: > "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-02_00-00-00/bg-pending.marker"
 
-cat > "$AC12_BASE/2026-03-01_00-00-00/state.md" <<'EOF_AC12_OLDER'
+cat > "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-01_00-00-00/state.md" <<'EOF_FIND_LOOP_EXACT_SESSION_OLDER'
 ---
 current_round: 0
 max_iterations: 42
@@ -769,38 +859,38 @@ codex_model: gpt-5.5
 codex_effort: high
 session_id: session_home
 ---
-EOF_AC12_OLDER
+EOF_FIND_LOOP_EXACT_SESSION_OLDER
 
-AC12_RESULT=$(
+FIND_LOOP_EXACT_SESSION_RESULT=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    find_active_loop "$AC12_BASE" "session_home"
+    find_active_loop "$FIND_LOOP_EXACT_SESSION_BASE" "session_home"
 )
-if [[ "$AC12_RESULT" == "$AC12_BASE/2026-03-01_00-00-00" ]]; then
-    pass "AC-12: find_active_loop returns older exact-match dir over newer marker dir"
+if [[ "$FIND_LOOP_EXACT_SESSION_RESULT" == "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-01_00-00-00" ]]; then
+    pass "find_active_loop returns older exact-match dir over newer marker dir"
 else
-    fail "AC-12: find_active_loop returns older exact-match dir over newer marker dir" \
-        "$AC12_BASE/2026-03-01_00-00-00" "$AC12_RESULT"
+    fail "find_active_loop returns older exact-match dir over newer marker dir" \
+        "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-01_00-00-00" "$FIND_LOOP_EXACT_SESSION_RESULT"
 fi
 
-if [[ -f "$AC12_BASE/2026-03-02_00-00-00/bg-pending.marker" ]]; then
-    pass "AC-12b: foreign session's marker untouched by find_active_loop scan"
+if [[ -f "$FIND_LOOP_EXACT_SESSION_BASE/2026-03-02_00-00-00/bg-pending.marker" ]]; then
+    pass "foreign session's marker untouched by find_active_loop scan"
 else
-    fail "AC-12b: foreign session's marker untouched by find_active_loop scan" \
+    fail "foreign session's marker untouched by find_active_loop scan" \
         "newer dir marker still present" "marker was removed"
 fi
 
-# ---------------- AC-13 ----------------
+# ---------------- same-session resume clears marker ----------------
 # Same-session resume after background completion: a stale marker from the
 # previous short-circuit must be cleaned up on the next stop where no bg is
 # pending. State.md session_id stays put because it already matches.
-echo "Test AC-13: same-session resume removes stale bg-pending.marker"
-AC13_REPO="$TEST_DIR/ac13"
-AC13_LOOP=$(create_full_fixture "$AC13_REPO")
-AC13_STATE="$AC13_LOOP/state.md"
-AC13_BRANCH=$(git -C "$AC13_REPO" rev-parse --abbrev-ref HEAD)
-AC13_BASE_COMMIT=$(git -C "$AC13_REPO" rev-parse HEAD)
-cat > "$AC13_STATE" <<EOF_AC13
+echo "Test: same-session resume removes stale bg-pending.marker"
+SAME_SESSION_RESUME_REPO="$TEST_DIR/same_session_resume"
+SAME_SESSION_RESUME_LOOP=$(create_full_fixture "$SAME_SESSION_RESUME_REPO")
+SAME_SESSION_RESUME_STATE="$SAME_SESSION_RESUME_LOOP/state.md"
+SAME_SESSION_RESUME_BRANCH=$(git -C "$SAME_SESSION_RESUME_REPO" rev-parse --abbrev-ref HEAD)
+SAME_SESSION_RESUME_BASE_COMMIT=$(git -C "$SAME_SESSION_RESUME_REPO" rev-parse HEAD)
+cat > "$SAME_SESSION_RESUME_STATE" <<EOF_SAME_SESSION_RESUME
 ---
 current_round: 0
 max_iterations: 42
@@ -811,52 +901,52 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC13_BRANCH
-base_branch: $AC13_BRANCH
-base_commit: $AC13_BASE_COMMIT
+start_branch: $SAME_SESSION_RESUME_BRANCH
+base_branch: $SAME_SESSION_RESUME_BRANCH
+base_commit: $SAME_SESSION_RESUME_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_home
 ---
-EOF_AC13
-: > "$AC13_LOOP/bg-pending.marker"
+EOF_SAME_SESSION_RESUME
+: > "$SAME_SESSION_RESUME_LOOP/bg-pending.marker"
 
-AC13_TRANSCRIPT="$TRANSCRIPTS_DIR/ac13.jsonl"
-write_transcript "$AC13_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
-AC13_INPUT=$(jq -c -n --arg tp "$AC13_TRANSCRIPT" \
+SAME_SESSION_RESUME_TRANSCRIPT="$TRANSCRIPTS_DIR/same_session_resume.jsonl"
+write_transcript "$SAME_SESSION_RESUME_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+SAME_SESSION_RESUME_INPUT=$(jq -c -n --arg tp "$SAME_SESSION_RESUME_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_home"}')
-run_stop_hook_with_input "$AC13_REPO" "$AC13_INPUT"
+run_stop_hook_with_input "$SAME_SESSION_RESUME_REPO" "$SAME_SESSION_RESUME_INPUT"
 
-if [[ ! -f "$AC13_LOOP/bg-pending.marker" ]]; then
-    pass "AC-13: marker removed on non-short-circuit resume (same session)"
+if [[ ! -f "$SAME_SESSION_RESUME_LOOP/bg-pending.marker" ]]; then
+    pass "marker removed on non-short-circuit resume (same session)"
 else
-    fail "AC-13: marker removed on non-short-circuit resume (same session)" \
+    fail "marker removed on non-short-circuit resume (same session)" \
         "marker absent" "marker still present"
 fi
 
-if grep -q "^session_id: session_home$" "$AC13_STATE"; then
-    pass "AC-13b: same-session resume leaves state.md session_id unchanged"
+if grep -q "^session_id: session_home$" "$SAME_SESSION_RESUME_STATE"; then
+    pass "same-session resume leaves state.md session_id unchanged"
 else
-    fail "AC-13b: same-session resume leaves state.md session_id unchanged" \
-        "session_id: session_home" "$(grep '^session_id:' "$AC13_STATE" || echo '(missing)')"
+    fail "same-session resume leaves state.md session_id unchanged" \
+        "session_id: session_home" "$(grep '^session_id:' "$SAME_SESSION_RESUME_STATE" || echo '(missing)')"
 fi
 
-# ---------------- AC-14 ----------------
+# ---------------- cross-session stop preserves marker ----------------
 # Anti-hijack: a different session walking in MUST NOT rewrite the stored
 # session_id and MUST NOT delete bg-pending.marker, even when its own
 # transcript shows no pending bg events. The foreign session's transcript
 # cannot observe the parking session's bg activity, so nothing the new
 # session sees is authoritative. The cross-session guard takes over
 # instead.
-echo "Test AC-14: cross-session stop preserves marker and stored session_id"
-AC14_REPO="$TEST_DIR/ac14"
-AC14_LOOP=$(create_full_fixture "$AC14_REPO")
-AC14_STATE="$AC14_LOOP/state.md"
-AC14_MARKER="$AC14_LOOP/bg-pending.marker"
-AC14_BRANCH=$(git -C "$AC14_REPO" rev-parse --abbrev-ref HEAD)
-AC14_BASE_COMMIT=$(git -C "$AC14_REPO" rev-parse HEAD)
-cat > "$AC14_STATE" <<EOF_AC14
+echo "Test: cross-session stop preserves marker and stored session_id"
+CROSS_SESSION_PRESERVE_REPO="$TEST_DIR/cross_session_preserve"
+CROSS_SESSION_PRESERVE_LOOP=$(create_full_fixture "$CROSS_SESSION_PRESERVE_REPO")
+CROSS_SESSION_PRESERVE_STATE="$CROSS_SESSION_PRESERVE_LOOP/state.md"
+CROSS_SESSION_PRESERVE_MARKER="$CROSS_SESSION_PRESERVE_LOOP/bg-pending.marker"
+CROSS_SESSION_PRESERVE_BRANCH=$(git -C "$CROSS_SESSION_PRESERVE_REPO" rev-parse --abbrev-ref HEAD)
+CROSS_SESSION_PRESERVE_BASE_COMMIT=$(git -C "$CROSS_SESSION_PRESERVE_REPO" rev-parse HEAD)
+cat > "$CROSS_SESSION_PRESERVE_STATE" <<EOF_CROSS_SESSION_PRESERVE
 ---
 current_round: 0
 max_iterations: 42
@@ -867,104 +957,104 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC14_BRANCH
-base_branch: $AC14_BRANCH
-base_commit: $AC14_BASE_COMMIT
+start_branch: $CROSS_SESSION_PRESERVE_BRANCH
+base_branch: $CROSS_SESSION_PRESERVE_BRANCH
+base_commit: $CROSS_SESSION_PRESERVE_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_foreign
 ---
-EOF_AC14
-: > "$AC14_MARKER"
+EOF_CROSS_SESSION_PRESERVE
+: > "$CROSS_SESSION_PRESERVE_MARKER"
 
-AC14_TRANSCRIPT="$TRANSCRIPTS_DIR/ac14.jsonl"
-write_transcript "$AC14_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
-AC14_INPUT=$(jq -c -n --arg tp "$AC14_TRANSCRIPT" \
+CROSS_SESSION_PRESERVE_TRANSCRIPT="$TRANSCRIPTS_DIR/cross_session_preserve.jsonl"
+write_transcript "$CROSS_SESSION_PRESERVE_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+CROSS_SESSION_PRESERVE_INPUT=$(jq -c -n --arg tp "$CROSS_SESSION_PRESERVE_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_home"}')
-run_stop_hook_with_input "$AC14_REPO" "$AC14_INPUT"
+run_stop_hook_with_input "$CROSS_SESSION_PRESERVE_REPO" "$CROSS_SESSION_PRESERVE_INPUT"
 
-if [[ -f "$AC14_MARKER" ]]; then
-    pass "AC-14: cross-session stop preserves bg-pending.marker"
+if [[ -f "$CROSS_SESSION_PRESERVE_MARKER" ]]; then
+    pass "cross-session stop preserves bg-pending.marker"
 else
-    fail "AC-14: cross-session stop preserves bg-pending.marker" \
+    fail "cross-session stop preserves bg-pending.marker" \
         "marker still present" "marker was removed (foreign-session hijack)"
 fi
 
-if grep -q "^session_id: session_foreign$" "$AC14_STATE"; then
-    pass "AC-14b: cross-session stop leaves stored session_id intact"
+if grep -q "^session_id: session_foreign$" "$CROSS_SESSION_PRESERVE_STATE"; then
+    pass "cross-session stop leaves stored session_id intact"
 else
-    fail "AC-14b: cross-session stop leaves stored session_id intact" \
-        "session_id: session_foreign" "$(grep '^session_id:' "$AC14_STATE" || echo '(missing)')"
+    fail "cross-session stop leaves stored session_id intact" \
+        "session_id: session_foreign" "$(grep '^session_id:' "$CROSS_SESSION_PRESERVE_STATE" || echo '(missing)')"
 fi
 
-# ---------------- AC-15 ----------------
+# ---------------- task_notification completion ----------------
 # Completion recognition: the current Claude Code transcript format emits
 # background-task completion as
 #   type: "system", subtype: "task_notification", task_id: "..."
 # The helper must recognise this form (not only the legacy queue-operation
 # XML block) or launched tasks will stay "pending" forever.
-echo "Test AC-15: task_notification system records mark launches completed"
-AC15_TRANSCRIPT="$TRANSCRIPTS_DIR/ac15.jsonl"
-AC15_LAUNCH=$(emit_tool_use_assistant "toolu_L" "Agent" ',"description":"x","prompt":"x"')
-AC15_RESULT=$(emit_async_agent_launch_result "toolu_L" "agent_done_L")
-AC15_NOTIF=$(emit_sdk_task_notification "agent_done_L" "toolu_L" "completed")
-write_transcript "$AC15_TRANSCRIPT" "$AC15_LAUNCH" "$AC15_RESULT" "$AC15_NOTIF"
+echo "Test: task_notification system records mark launches completed"
+TASK_NOTIFICATION_COMPLETE_TRANSCRIPT="$TRANSCRIPTS_DIR/task_notification_complete.jsonl"
+TASK_NOTIFICATION_COMPLETE_LAUNCH=$(emit_tool_use_assistant "toolu_L" "Agent" ',"description":"x","prompt":"x"')
+TASK_NOTIFICATION_COMPLETE_RESULT=$(emit_async_agent_launch_result "toolu_L" "agent_done_L")
+TASK_NOTIFICATION_COMPLETE_NOTIF=$(emit_sdk_task_notification "agent_done_L" "toolu_L" "completed")
+write_transcript "$TASK_NOTIFICATION_COMPLETE_TRANSCRIPT" "$TASK_NOTIFICATION_COMPLETE_LAUNCH" "$TASK_NOTIFICATION_COMPLETE_RESULT" "$TASK_NOTIFICATION_COMPLETE_NOTIF"
 
-AC15_PENDING=$(
+TASK_NOTIFICATION_COMPLETE_PENDING=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    list_pending_background_task_ids "$AC15_TRANSCRIPT" 2>/dev/null
+    list_pending_background_task_ids "$TASK_NOTIFICATION_COMPLETE_TRANSCRIPT" 2>/dev/null
 )
-if [[ -z "$AC15_PENDING" ]]; then
-    pass "AC-15: task_notification completion removes the matching launch from pending"
+if [[ -z "$TASK_NOTIFICATION_COMPLETE_PENDING" ]]; then
+    pass "task_notification completion removes the matching launch from pending"
 else
-    fail "AC-15: task_notification completion removes the matching launch from pending" \
-        "empty pending list" "got: $AC15_PENDING"
+    fail "task_notification completion removes the matching launch from pending" \
+        "empty pending list" "got: $TASK_NOTIFICATION_COMPLETE_PENDING"
 fi
 
-# ---------------- AC-16 ----------------
+# ---------------- mixed completion formats ----------------
 # Completion recognition mixed formats: two launches, one completed via the
 # legacy queue-operation XML block, the other via the current
 # system/task_notification record. Union of both sources must resolve to
 # an empty pending set.
-echo "Test AC-16: helper unions legacy queue-operation and task_notification completions"
-AC16_TRANSCRIPT="$TRANSCRIPTS_DIR/ac16.jsonl"
-AC16_L1=$(emit_tool_use_assistant "toolu_M1" "Agent" ',"description":"x","prompt":"x"')
-AC16_R1=$(emit_async_agent_launch_result "toolu_M1" "agent_legacy_M1")
-AC16_C1=$(emit_task_completion_event "agent_legacy_M1" "toolu_M1" "completed")
-AC16_L2=$(emit_tool_use_assistant "toolu_M2" "Agent" ',"description":"y","prompt":"y"')
-AC16_R2=$(emit_async_agent_launch_result "toolu_M2" "agent_sdk_M2")
-AC16_C2=$(emit_sdk_task_notification "agent_sdk_M2" "toolu_M2" "completed")
-write_transcript "$AC16_TRANSCRIPT" \
-    "$AC16_L1" "$AC16_R1" "$AC16_C1" \
-    "$AC16_L2" "$AC16_R2" "$AC16_C2"
+echo "Test: helper unions legacy queue-operation and task_notification completions"
+MIXED_COMPLETION_FORMATS_TRANSCRIPT="$TRANSCRIPTS_DIR/mixed_completion_formats.jsonl"
+MIXED_COMPLETION_FORMATS_L1=$(emit_tool_use_assistant "toolu_M1" "Agent" ',"description":"x","prompt":"x"')
+MIXED_COMPLETION_FORMATS_R1=$(emit_async_agent_launch_result "toolu_M1" "agent_legacy_M1")
+MIXED_COMPLETION_FORMATS_C1=$(emit_task_completion_event "agent_legacy_M1" "toolu_M1" "completed")
+MIXED_COMPLETION_FORMATS_L2=$(emit_tool_use_assistant "toolu_M2" "Agent" ',"description":"y","prompt":"y"')
+MIXED_COMPLETION_FORMATS_R2=$(emit_async_agent_launch_result "toolu_M2" "agent_sdk_M2")
+MIXED_COMPLETION_FORMATS_C2=$(emit_sdk_task_notification "agent_sdk_M2" "toolu_M2" "completed")
+write_transcript "$MIXED_COMPLETION_FORMATS_TRANSCRIPT" \
+    "$MIXED_COMPLETION_FORMATS_L1" "$MIXED_COMPLETION_FORMATS_R1" "$MIXED_COMPLETION_FORMATS_C1" \
+    "$MIXED_COMPLETION_FORMATS_L2" "$MIXED_COMPLETION_FORMATS_R2" "$MIXED_COMPLETION_FORMATS_C2"
 
-AC16_PENDING=$(
+MIXED_COMPLETION_FORMATS_PENDING=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    list_pending_background_task_ids "$AC16_TRANSCRIPT" 2>/dev/null
+    list_pending_background_task_ids "$MIXED_COMPLETION_FORMATS_TRANSCRIPT" 2>/dev/null
 )
-if [[ -z "$AC16_PENDING" ]]; then
-    pass "AC-16: mixed legacy+SDK completion records resolve to empty pending set"
+if [[ -z "$MIXED_COMPLETION_FORMATS_PENDING" ]]; then
+    pass "mixed legacy+SDK completion records resolve to empty pending set"
 else
-    fail "AC-16: mixed legacy+SDK completion records resolve to empty pending set" \
-        "empty pending list" "got: $AC16_PENDING"
+    fail "mixed legacy+SDK completion records resolve to empty pending set" \
+        "empty pending list" "got: $MIXED_COMPLETION_FORMATS_PENDING"
 fi
 
-# ---------------- AC-17 ----------------
+# ---------------- unreadable transcript with marker ----------------
 # Marker preservation when completion cannot be verified: if
 # transcript_path is missing or unreadable, has_pending_background_tasks
 # fails closed (returns no pending). The non-short-circuit cleanup must NOT
 # erase bg-pending.marker or rewrite session_id in that case, because the
 # cross-session recovery signal is still needed.
-echo "Test AC-17: missing transcript preserves bg-pending.marker and session_id"
-AC17_REPO="$TEST_DIR/ac17"
-AC17_LOOP=$(create_full_fixture "$AC17_REPO")
-AC17_STATE="$AC17_LOOP/state.md"
-AC17_BRANCH=$(git -C "$AC17_REPO" rev-parse --abbrev-ref HEAD)
-AC17_BASE_COMMIT=$(git -C "$AC17_REPO" rev-parse HEAD)
-cat > "$AC17_STATE" <<EOF_AC17
+echo "Test: missing transcript preserves bg-pending.marker and session_id"
+UNREADABLE_TRANSCRIPT_REPO="$TEST_DIR/unreadable_transcript"
+UNREADABLE_TRANSCRIPT_LOOP=$(create_full_fixture "$UNREADABLE_TRANSCRIPT_REPO")
+UNREADABLE_TRANSCRIPT_STATE="$UNREADABLE_TRANSCRIPT_LOOP/state.md"
+UNREADABLE_TRANSCRIPT_BRANCH=$(git -C "$UNREADABLE_TRANSCRIPT_REPO" rev-parse --abbrev-ref HEAD)
+UNREADABLE_TRANSCRIPT_BASE_COMMIT=$(git -C "$UNREADABLE_TRANSCRIPT_REPO" rev-parse HEAD)
+cat > "$UNREADABLE_TRANSCRIPT_STATE" <<EOF_UNREADABLE_TRANSCRIPT
 ---
 current_round: 0
 max_iterations: 42
@@ -975,46 +1065,46 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC17_BRANCH
-base_branch: $AC17_BRANCH
-base_commit: $AC17_BASE_COMMIT
+start_branch: $UNREADABLE_TRANSCRIPT_BRANCH
+base_branch: $UNREADABLE_TRANSCRIPT_BRANCH
+base_commit: $UNREADABLE_TRANSCRIPT_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_foreign
 ---
-EOF_AC17
-: > "$AC17_LOOP/bg-pending.marker"
+EOF_UNREADABLE_TRANSCRIPT
+: > "$UNREADABLE_TRANSCRIPT_LOOP/bg-pending.marker"
 
 # Hook input has NO transcript_path -> has_pending_background_tasks is
 # fail-closed; cleanup path must leave marker and session_id intact.
-AC17_INPUT='{"session_id":"session_home"}'
-run_stop_hook_with_input "$AC17_REPO" "$AC17_INPUT"
+UNREADABLE_TRANSCRIPT_INPUT='{"session_id":"session_home"}'
+run_stop_hook_with_input "$UNREADABLE_TRANSCRIPT_REPO" "$UNREADABLE_TRANSCRIPT_INPUT"
 
-if [[ -f "$AC17_LOOP/bg-pending.marker" ]]; then
-    pass "AC-17: unreadable transcript preserves bg-pending.marker"
+if [[ -f "$UNREADABLE_TRANSCRIPT_LOOP/bg-pending.marker" ]]; then
+    pass "unreadable transcript preserves bg-pending.marker"
 else
-    fail "AC-17: unreadable transcript preserves bg-pending.marker" \
+    fail "unreadable transcript preserves bg-pending.marker" \
         "marker still present" "marker was removed"
 fi
 
-if grep -q "^session_id: session_foreign$" "$AC17_STATE"; then
-    pass "AC-17b: unreadable transcript leaves stored session_id untouched"
+if grep -q "^session_id: session_foreign$" "$UNREADABLE_TRANSCRIPT_STATE"; then
+    pass "unreadable transcript leaves stored session_id untouched"
 else
-    fail "AC-17b: unreadable transcript leaves stored session_id untouched" \
-        "session_id: session_foreign" "$(grep '^session_id:' "$AC17_STATE" || echo '(missing)')"
+    fail "unreadable transcript leaves stored session_id untouched" \
+        "session_id: session_foreign" "$(grep '^session_id:' "$UNREADABLE_TRANSCRIPT_STATE" || echo '(missing)')"
 fi
 
-# AC-17c: transcript_path is provided but points at a non-existent file
+# transcript_path is provided but points at a non-existent file
 # (equally unreadable). Same guarantee: marker + stored session_id
 # preserved.
-echo "Test AC-17c: transcript_path pointing at non-existent file preserves marker"
-AC17C_REPO="$TEST_DIR/ac17c"
-AC17C_LOOP=$(create_full_fixture "$AC17C_REPO")
-AC17C_STATE="$AC17C_LOOP/state.md"
-AC17C_BRANCH=$(git -C "$AC17C_REPO" rev-parse --abbrev-ref HEAD)
-AC17C_BASE_COMMIT=$(git -C "$AC17C_REPO" rev-parse HEAD)
-cat > "$AC17C_STATE" <<EOF_AC17C
+echo "Test: transcript_path pointing at non-existent file preserves marker"
+MISSING_FILE_TRANSCRIPT_REPO="$TEST_DIR/missing_file_transcript"
+MISSING_FILE_TRANSCRIPT_LOOP=$(create_full_fixture "$MISSING_FILE_TRANSCRIPT_REPO")
+MISSING_FILE_TRANSCRIPT_STATE="$MISSING_FILE_TRANSCRIPT_LOOP/state.md"
+MISSING_FILE_TRANSCRIPT_BRANCH=$(git -C "$MISSING_FILE_TRANSCRIPT_REPO" rev-parse --abbrev-ref HEAD)
+MISSING_FILE_TRANSCRIPT_BASE_COMMIT=$(git -C "$MISSING_FILE_TRANSCRIPT_REPO" rev-parse HEAD)
+cat > "$MISSING_FILE_TRANSCRIPT_STATE" <<EOF_MISSING_FILE_TRANSCRIPT
 ---
 current_round: 0
 max_iterations: 42
@@ -1025,40 +1115,40 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC17C_BRANCH
-base_branch: $AC17C_BRANCH
-base_commit: $AC17C_BASE_COMMIT
+start_branch: $MISSING_FILE_TRANSCRIPT_BRANCH
+base_branch: $MISSING_FILE_TRANSCRIPT_BRANCH
+base_commit: $MISSING_FILE_TRANSCRIPT_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_foreign
 ---
-EOF_AC17C
-: > "$AC17C_LOOP/bg-pending.marker"
+EOF_MISSING_FILE_TRANSCRIPT
+: > "$MISSING_FILE_TRANSCRIPT_LOOP/bg-pending.marker"
 
-AC17C_INPUT=$(jq -c -n --arg tp "$TRANSCRIPTS_DIR/never-written.jsonl" \
+MISSING_FILE_TRANSCRIPT_INPUT=$(jq -c -n --arg tp "$TRANSCRIPTS_DIR/never-written.jsonl" \
     '{transcript_path:$tp, session_id:"session_home"}')
-run_stop_hook_with_input "$AC17C_REPO" "$AC17C_INPUT"
+run_stop_hook_with_input "$MISSING_FILE_TRANSCRIPT_REPO" "$MISSING_FILE_TRANSCRIPT_INPUT"
 
-if [[ -f "$AC17C_LOOP/bg-pending.marker" ]] \
-   && grep -q "^session_id: session_foreign$" "$AC17C_STATE"; then
-    pass "AC-17c: missing-file transcript_path preserves marker and session_id"
+if [[ -f "$MISSING_FILE_TRANSCRIPT_LOOP/bg-pending.marker" ]] \
+   && grep -q "^session_id: session_foreign$" "$MISSING_FILE_TRANSCRIPT_STATE"; then
+    pass "missing-file transcript_path preserves marker and session_id"
 else
-    fail "AC-17c: missing-file transcript_path preserves marker and session_id" \
+    fail "missing-file transcript_path preserves marker and session_id" \
         "marker present and session_id: session_foreign" \
-        "marker=$(test -f "$AC17C_LOOP/bg-pending.marker" && echo present || echo missing); session_id=$(grep '^session_id:' "$AC17C_STATE" || echo '(missing)')"
+        "marker=$(test -f "$MISSING_FILE_TRANSCRIPT_LOOP/bg-pending.marker" && echo present || echo missing); session_id=$(grep '^session_id:' "$MISSING_FILE_TRANSCRIPT_STATE" || echo '(missing)')"
 fi
 
-# ---------------- AC-18 ----------------
+# ---------------- find_active_loop ignores foreign marker ----------------
 # Validator isolation: find_active_loop's marker-based adoption is opt-in
 # via its third positional argument. Default callers (read/write/bash/etc.
 # validators) must continue to see strict session-id isolation; a parked
 # loop for a different session must NOT become visible to them through a
 # bg-pending.marker.
-echo "Test AC-18: find_active_loop default invocation ignores foreign marker"
-AC18_BASE="$TEST_DIR/ac18-loops"
-mkdir -p "$AC18_BASE/2026-03-02_00-00-00"
-cat > "$AC18_BASE/2026-03-02_00-00-00/state.md" <<'EOF_AC18'
+echo "Test: find_active_loop default invocation ignores foreign marker"
+FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE="$TEST_DIR/find_loop_ignores_foreign_marker-loops"
+mkdir -p "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE/2026-03-02_00-00-00"
+cat > "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE/2026-03-02_00-00-00/state.md" <<'EOF_FIND_LOOP_IGNORES_FOREIGN_MARKER'
 ---
 current_round: 0
 max_iterations: 42
@@ -1066,34 +1156,34 @@ codex_model: gpt-5.5
 codex_effort: high
 session_id: session_foreign
 ---
-EOF_AC18
-: > "$AC18_BASE/2026-03-02_00-00-00/bg-pending.marker"
+EOF_FIND_LOOP_IGNORES_FOREIGN_MARKER
+: > "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE/2026-03-02_00-00-00/bg-pending.marker"
 
-AC18_DEFAULT=$(
+FIND_LOOP_IGNORES_FOREIGN_MARKER_DEFAULT=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    find_active_loop "$AC18_BASE" "session_home"
+    find_active_loop "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE" "session_home"
 )
-if [[ -z "$AC18_DEFAULT" ]]; then
-    pass "AC-18: find_active_loop default (no opt-in) ignores foreign marker dir"
+if [[ -z "$FIND_LOOP_IGNORES_FOREIGN_MARKER_DEFAULT" ]]; then
+    pass "find_active_loop default (no opt-in) ignores foreign marker dir"
 else
-    fail "AC-18: find_active_loop default (no opt-in) ignores foreign marker dir" \
-        "empty result (validators stay isolated)" "got: $AC18_DEFAULT"
+    fail "find_active_loop default (no opt-in) ignores foreign marker dir" \
+        "empty result (validators stay isolated)" "got: $FIND_LOOP_IGNORES_FOREIGN_MARKER_DEFAULT"
 fi
 
-AC18_OPTIN=$(
+FIND_LOOP_IGNORES_FOREIGN_MARKER_OPTIN=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    find_active_loop "$AC18_BASE" "session_home" true
+    find_active_loop "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE" "session_home" true
 )
-if [[ "$AC18_OPTIN" == "$AC18_BASE/2026-03-02_00-00-00" ]]; then
-    pass "AC-18b: find_active_loop with opt-in does return the marker dir"
+if [[ "$FIND_LOOP_IGNORES_FOREIGN_MARKER_OPTIN" == "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE/2026-03-02_00-00-00" ]]; then
+    pass "find_active_loop with opt-in does return the marker dir"
 else
-    fail "AC-18b: find_active_loop with opt-in does return the marker dir" \
-        "$AC18_BASE/2026-03-02_00-00-00" "$AC18_OPTIN"
+    fail "find_active_loop with opt-in does return the marker dir" \
+        "$FIND_LOOP_IGNORES_FOREIGN_MARKER_BASE/2026-03-02_00-00-00" "$FIND_LOOP_IGNORES_FOREIGN_MARKER_OPTIN"
 fi
 
-# ---------------- AC-19 ----------------
+# ---------------- ambiguous caller exits silently ----------------
 # Empty-session caller + bg-pending.marker present: the caller might be
 # the parked loop's owner invoking through a wrapper that didn't forward
 # session_id, OR it might be a different session. The hook cannot tell
@@ -1101,14 +1191,14 @@ fi
 # with no systemMessage and no on-disk mutation. The real Claude stop
 # hook (which always has session_id populated) drives actual parking and
 # cleanup.
-echo "Test AC-19: ambiguous caller (empty session_id + marker) exits silently"
-AC19_REPO="$TEST_DIR/ac19"
-AC19_LOOP=$(create_full_fixture "$AC19_REPO")
-AC19_STATE="$AC19_LOOP/state.md"
-AC19_MARKER="$AC19_LOOP/bg-pending.marker"
-AC19_BRANCH=$(git -C "$AC19_REPO" rev-parse --abbrev-ref HEAD)
-AC19_BASE_COMMIT=$(git -C "$AC19_REPO" rev-parse HEAD)
-cat > "$AC19_STATE" <<EOF_AC19
+echo "Test: ambiguous caller (empty session_id + marker) exits silently"
+AMBIGUOUS_CALLER_REPO="$TEST_DIR/ambiguous_caller"
+AMBIGUOUS_CALLER_LOOP=$(create_full_fixture "$AMBIGUOUS_CALLER_REPO")
+AMBIGUOUS_CALLER_STATE="$AMBIGUOUS_CALLER_LOOP/state.md"
+AMBIGUOUS_CALLER_MARKER="$AMBIGUOUS_CALLER_LOOP/bg-pending.marker"
+AMBIGUOUS_CALLER_BRANCH=$(git -C "$AMBIGUOUS_CALLER_REPO" rev-parse --abbrev-ref HEAD)
+AMBIGUOUS_CALLER_BASE_COMMIT=$(git -C "$AMBIGUOUS_CALLER_REPO" rev-parse HEAD)
+cat > "$AMBIGUOUS_CALLER_STATE" <<EOF_AMBIGUOUS_CALLER
 ---
 current_round: 0
 max_iterations: 42
@@ -1119,51 +1209,51 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC19_BRANCH
-base_branch: $AC19_BRANCH
-base_commit: $AC19_BASE_COMMIT
+start_branch: $AMBIGUOUS_CALLER_BRANCH
+base_branch: $AMBIGUOUS_CALLER_BRANCH
+base_commit: $AMBIGUOUS_CALLER_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_alpha
 ---
-EOF_AC19
-AC19_STATE_HASH_BEFORE=$(sha256sum "$AC19_STATE" | awk '{print $1}')
-: > "$AC19_MARKER"
+EOF_AMBIGUOUS_CALLER
+AMBIGUOUS_CALLER_STATE_HASH_BEFORE=$(sha256sum "$AMBIGUOUS_CALLER_STATE" | awk '{print $1}')
+: > "$AMBIGUOUS_CALLER_MARKER"
 
-AC19_TRANSCRIPT="$TRANSCRIPTS_DIR/ac19.jsonl"
-write_transcript "$AC19_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
+AMBIGUOUS_CALLER_TRANSCRIPT="$TRANSCRIPTS_DIR/ambiguous_caller.jsonl"
+write_transcript "$AMBIGUOUS_CALLER_TRANSCRIPT" '{"type":"user","message":{"role":"user","content":"hello"}}'
 
 # Hook input without any session_id key (mirrors rlcr-stop-gate.sh
 # invoked without --session-id).
-AC19_INPUT=$(jq -c -n --arg tp "$AC19_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC19_REPO" "$AC19_INPUT"
-AC19_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
-AC19_STATE_HASH_AFTER=$(sha256sum "$AC19_STATE" | awk '{print $1}')
+AMBIGUOUS_CALLER_INPUT=$(jq -c -n --arg tp "$AMBIGUOUS_CALLER_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AMBIGUOUS_CALLER_REPO" "$AMBIGUOUS_CALLER_INPUT"
+AMBIGUOUS_CALLER_SYS_MSG=$(printf '%s' "$RUN_OUTPUT" | jq -r '.systemMessage // empty' 2>/dev/null || echo "")
+AMBIGUOUS_CALLER_STATE_HASH_AFTER=$(sha256sum "$AMBIGUOUS_CALLER_STATE" | awk '{print $1}')
 if [[ "$RUN_EXIT_CODE" -eq 0 ]] \
    && [[ ! -f "$RUN_MARKER" ]] \
-   && [[ -f "$AC19_MARKER" ]] \
-   && [[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] \
-   && [[ -z "$AC19_SYS_MSG" ]]; then
-    pass "AC-19: ambiguous caller exits silently; marker and state.md preserved"
+   && [[ -f "$AMBIGUOUS_CALLER_MARKER" ]] \
+   && [[ "$AMBIGUOUS_CALLER_STATE_HASH_BEFORE" == "$AMBIGUOUS_CALLER_STATE_HASH_AFTER" ]] \
+   && [[ -z "$AMBIGUOUS_CALLER_SYS_MSG" ]]; then
+    pass "ambiguous caller exits silently; marker and state.md preserved"
 else
-    fail "AC-19: ambiguous caller exits silently; marker and state.md preserved" \
+    fail "ambiguous caller exits silently; marker and state.md preserved" \
         "exit 0 + no systemMessage + marker stays + state.md byte-identical + no Codex" \
-        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AC19_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AC19_STATE_HASH_BEFORE" == "$AC19_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AC19_SYS_MSG'; output: $RUN_OUTPUT"
+        "exit $RUN_EXIT_CODE, codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing), bg_marker=$(test -f "$AMBIGUOUS_CALLER_MARKER" && echo present || echo missing), state_unchanged=$([[ "$AMBIGUOUS_CALLER_STATE_HASH_BEFORE" == "$AMBIGUOUS_CALLER_STATE_HASH_AFTER" ]] && echo yes || echo no), systemMessage='$AMBIGUOUS_CALLER_SYS_MSG'; output: $RUN_OUTPUT"
 fi
 
-# ---------------- AC-20 ----------------
+# ---------------- malformed transcript with marker ----------------
 # Non-short-circuit cleanup must not drop bg-pending.marker when the
 # transcript exists but cannot be parsed. The helper is fail-closed on
 # malformed JSON; that failure must NOT be treated as "no pending".
-echo "Test AC-20: malformed transcript preserves bg-pending.marker"
-AC20_REPO="$TEST_DIR/ac20"
-AC20_LOOP=$(create_full_fixture "$AC20_REPO")
-AC20_STATE="$AC20_LOOP/state.md"
-AC20_MARKER="$AC20_LOOP/bg-pending.marker"
-AC20_BRANCH=$(git -C "$AC20_REPO" rev-parse --abbrev-ref HEAD)
-AC20_BASE_COMMIT=$(git -C "$AC20_REPO" rev-parse HEAD)
-cat > "$AC20_STATE" <<EOF_AC20
+echo "Test: malformed transcript preserves bg-pending.marker"
+MALFORMED_TRANSCRIPT_REPO="$TEST_DIR/malformed_transcript"
+MALFORMED_TRANSCRIPT_LOOP=$(create_full_fixture "$MALFORMED_TRANSCRIPT_REPO")
+MALFORMED_TRANSCRIPT_STATE="$MALFORMED_TRANSCRIPT_LOOP/state.md"
+MALFORMED_TRANSCRIPT_MARKER="$MALFORMED_TRANSCRIPT_LOOP/bg-pending.marker"
+MALFORMED_TRANSCRIPT_BRANCH=$(git -C "$MALFORMED_TRANSCRIPT_REPO" rev-parse --abbrev-ref HEAD)
+MALFORMED_TRANSCRIPT_BASE_COMMIT=$(git -C "$MALFORMED_TRANSCRIPT_REPO" rev-parse HEAD)
+cat > "$MALFORMED_TRANSCRIPT_STATE" <<EOF_MALFORMED_TRANSCRIPT
 ---
 current_round: 0
 max_iterations: 42
@@ -1174,194 +1264,194 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC20_BRANCH
-base_branch: $AC20_BRANCH
-base_commit: $AC20_BASE_COMMIT
+start_branch: $MALFORMED_TRANSCRIPT_BRANCH
+base_branch: $MALFORMED_TRANSCRIPT_BRANCH
+base_commit: $MALFORMED_TRANSCRIPT_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_home
 ---
-EOF_AC20
-: > "$AC20_MARKER"
+EOF_MALFORMED_TRANSCRIPT
+: > "$MALFORMED_TRANSCRIPT_MARKER"
 
 # Write a deliberately malformed transcript (truncated JSON object) so
 # list_pending_background_task_ids's jq invocations fail the parse.
-AC20_TRANSCRIPT="$TRANSCRIPTS_DIR/ac20.jsonl"
-printf '%s\n' '{"type":"user","message":' > "$AC20_TRANSCRIPT"
+MALFORMED_TRANSCRIPT_TRANSCRIPT="$TRANSCRIPTS_DIR/malformed_transcript.jsonl"
+printf '%s\n' '{"type":"user","message":' > "$MALFORMED_TRANSCRIPT_TRANSCRIPT"
 
-AC20_INPUT=$(jq -c -n --arg tp "$AC20_TRANSCRIPT" \
+MALFORMED_TRANSCRIPT_INPUT=$(jq -c -n --arg tp "$MALFORMED_TRANSCRIPT_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_home"}')
-run_stop_hook_with_input "$AC20_REPO" "$AC20_INPUT"
+run_stop_hook_with_input "$MALFORMED_TRANSCRIPT_REPO" "$MALFORMED_TRANSCRIPT_INPUT"
 
-if [[ -f "$AC20_MARKER" ]]; then
-    pass "AC-20: malformed transcript preserves bg-pending.marker"
+if [[ -f "$MALFORMED_TRANSCRIPT_MARKER" ]]; then
+    pass "malformed transcript preserves bg-pending.marker"
 else
-    fail "AC-20: malformed transcript preserves bg-pending.marker" \
+    fail "malformed transcript preserves bg-pending.marker" \
         "marker still present (cleanup must not fire on fail-closed helper)" \
         "marker was removed"
 fi
 
-# ---------------- AC-21 ----------------
+# ---------------- pre-loop launches filtered by since_ts ----------------
 # Transcript scan boundary: the Claude transcript is session-wide and
 # can contain background launches that predate the RLCR loop. The
 # helper filters launch events by `.timestamp >= since_ts` (derived
 # from the loop dir basename) so only launches made after the loop
 # started count as pending.
-echo "Test AC-21: pre-loop launches are filtered out by since_ts"
-AC21_TRANSCRIPT="$TRANSCRIPTS_DIR/ac21.jsonl"
+echo "Test: pre-loop launches are filtered out by since_ts"
+PRE_LOOP_FILTERED_TRANSCRIPT="$TRANSCRIPTS_DIR/pre_loop_filtered.jsonl"
 
 # The loop boundary used throughout the suite's fixtures is
 # 2026-03-01 00:00:00. Build two launches: one BEFORE that boundary
 # (should be filtered) and one AFTER (should still count as pending).
-AC21_PRE_LAUNCH=$(jq -c -n '{
+PRE_LOOP_FILTERED_PRE_LAUNCH=$(jq -c -n '{
     type:"user",
     timestamp:"2026-02-28T10:00:00.000Z",
     toolUseResult:{isAsync:true, agentId:"agent_pre_loop"}
 }')
-AC21_POST_LAUNCH=$(jq -c -n '{
+PRE_LOOP_FILTERED_POST_LAUNCH=$(jq -c -n '{
     type:"user",
     timestamp:"2026-03-01T10:00:00.000Z",
     toolUseResult:{isAsync:true, agentId:"agent_in_loop"}
 }')
-write_transcript "$AC21_TRANSCRIPT" "$AC21_PRE_LAUNCH" "$AC21_POST_LAUNCH"
+write_transcript "$PRE_LOOP_FILTERED_TRANSCRIPT" "$PRE_LOOP_FILTERED_PRE_LAUNCH" "$PRE_LOOP_FILTERED_POST_LAUNCH"
 
-AC21_SINCE="2026-03-01T00:00:00.000Z"
-AC21_FILTERED=$(
+PRE_LOOP_FILTERED_SINCE="2026-03-01T00:00:00.000Z"
+PRE_LOOP_FILTERED_FILTERED=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
-    list_pending_background_task_ids "$AC21_TRANSCRIPT" "$AC21_SINCE" 2>/dev/null | sort -u
+    list_pending_background_task_ids "$PRE_LOOP_FILTERED_TRANSCRIPT" "$PRE_LOOP_FILTERED_SINCE" 2>/dev/null | sort -u
 )
-if [[ "$AC21_FILTERED" == "agent_in_loop" ]]; then
-    pass "AC-21: list_pending_background_task_ids filters launches before since_ts"
+if [[ "$PRE_LOOP_FILTERED_FILTERED" == "agent_in_loop" ]]; then
+    pass "list_pending_background_task_ids filters launches before since_ts"
 else
-    fail "AC-21: list_pending_background_task_ids filters launches before since_ts" \
-        "only 'agent_in_loop' (pre-loop launch excluded)" "got: $AC21_FILTERED"
+    fail "list_pending_background_task_ids filters launches before since_ts" \
+        "only 'agent_in_loop' (pre-loop launch excluded)" "got: $PRE_LOOP_FILTERED_FILTERED"
 fi
 
-# AC-21b: confirm the derive helper produces the expected ISO-8601 form
+# confirm the derive helper produces the expected ISO-8601 form
 # under TZ=UTC, where local wall clock == UTC so no offset is applied.
-AC21B_DERIVED=$(
+DERIVE_LOOP_START_ISO_DERIVED=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
     export TZ="UTC"
     derive_loop_start_iso_ts "/tmp/.humanize/rlcr/2026-03-01_00-00-00"
 )
-if [[ "$AC21B_DERIVED" == "2026-03-01T00:00:00.000Z" ]]; then
-    pass "AC-21b: derive_loop_start_iso_ts under TZ=UTC preserves the wall-clock"
+if [[ "$DERIVE_LOOP_START_ISO_DERIVED" == "2026-03-01T00:00:00.000Z" ]]; then
+    pass "derive_loop_start_iso_ts under TZ=UTC preserves the wall-clock"
 else
-    fail "AC-21b: derive_loop_start_iso_ts under TZ=UTC preserves the wall-clock" \
-        "2026-03-01T00:00:00.000Z" "$AC21B_DERIVED"
+    fail "derive_loop_start_iso_ts under TZ=UTC preserves the wall-clock" \
+        "2026-03-01T00:00:00.000Z" "$DERIVE_LOOP_START_ISO_DERIVED"
 fi
 
-# AC-21d: setup-rlcr-loop.sh names the dir with local wall clock, so a
+# setup-rlcr-loop.sh names the dir with local wall clock, so a
 # non-UTC caller must see the boundary shifted into actual UTC.
 # JST (UTC+9) example: 09:00 JST == 00:00 UTC.
-AC21D_DERIVED=$(
+JST_TO_UTC_DERIVED=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
     export TZ="Asia/Tokyo"
     derive_loop_start_iso_ts "/tmp/.humanize/rlcr/2026-03-01_09-00-00"
 )
-if [[ "$AC21D_DERIVED" == "2026-03-01T00:00:00.000Z" ]]; then
-    pass "AC-21d: derive_loop_start_iso_ts converts JST wall-clock to correct UTC"
+if [[ "$JST_TO_UTC_DERIVED" == "2026-03-01T00:00:00.000Z" ]]; then
+    pass "derive_loop_start_iso_ts converts JST wall-clock to correct UTC"
 else
-    fail "AC-21d: derive_loop_start_iso_ts converts JST wall-clock to correct UTC" \
-        "2026-03-01T00:00:00.000Z (9am JST = 0am UTC)" "$AC21D_DERIVED"
+    fail "derive_loop_start_iso_ts converts JST wall-clock to correct UTC" \
+        "2026-03-01T00:00:00.000Z (9am JST = 0am UTC)" "$JST_TO_UTC_DERIVED"
 fi
 
-# AC-21e: PST (UTC-8) example. Pick March 1 which is still PST (DST
+# PST (UTC-8) example. Pick March 1 which is still PST (DST
 # does not start until March 8, 2026), so the offset is a fixed -8h:
 # 00:00 PST == 08:00 UTC.
-AC21E_DERIVED=$(
+PST_TO_UTC_DERIVED=$(
     # shellcheck source=/dev/null
     source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
     export TZ="America/Los_Angeles"
     derive_loop_start_iso_ts "/tmp/.humanize/rlcr/2026-03-01_00-00-00"
 )
-if [[ "$AC21E_DERIVED" == "2026-03-01T08:00:00.000Z" ]]; then
-    pass "AC-21e: derive_loop_start_iso_ts converts PST wall-clock to correct UTC"
+if [[ "$PST_TO_UTC_DERIVED" == "2026-03-01T08:00:00.000Z" ]]; then
+    pass "derive_loop_start_iso_ts converts PST wall-clock to correct UTC"
 else
-    fail "AC-21e: derive_loop_start_iso_ts converts PST wall-clock to correct UTC" \
-        "2026-03-01T08:00:00.000Z (0am PST = 8am UTC before DST)" "$AC21E_DERIVED"
+    fail "derive_loop_start_iso_ts converts PST wall-clock to correct UTC" \
+        "2026-03-01T08:00:00.000Z (0am PST = 8am UTC before DST)" "$PST_TO_UTC_DERIVED"
 fi
 
-# AC-21c: end-to-end through the stop hook. Pre-loop launch only -> hook
+# end-to-end through the stop hook. Pre-loop launch only -> hook
 # must NOT short-circuit (no pending bg "belongs" to this loop).
-echo "Test AC-21c: stop hook ignores pre-loop launches for this loop"
-AC21C_REPO="$TEST_DIR/ac21c"
-AC21C_LOOP=$(create_full_fixture "$AC21C_REPO")
-AC21C_MARKER="$AC21C_LOOP/bg-pending.marker"
-AC21C_TRANSCRIPT="$TRANSCRIPTS_DIR/ac21c.jsonl"
-write_transcript "$AC21C_TRANSCRIPT" "$AC21_PRE_LAUNCH"
-AC21C_INPUT=$(jq -c -n --arg tp "$AC21C_TRANSCRIPT" \
+echo "Test: stop hook ignores pre-loop launches for this loop"
+PRE_LOOP_STOP_HOOK_REPO="$TEST_DIR/pre_loop_stop_hook"
+PRE_LOOP_STOP_HOOK_LOOP=$(create_full_fixture "$PRE_LOOP_STOP_HOOK_REPO")
+PRE_LOOP_STOP_HOOK_MARKER="$PRE_LOOP_STOP_HOOK_LOOP/bg-pending.marker"
+PRE_LOOP_STOP_HOOK_TRANSCRIPT="$TRANSCRIPTS_DIR/pre_loop_stop_hook.jsonl"
+write_transcript "$PRE_LOOP_STOP_HOOK_TRANSCRIPT" "$PRE_LOOP_FILTERED_PRE_LAUNCH"
+PRE_LOOP_STOP_HOOK_INPUT=$(jq -c -n --arg tp "$PRE_LOOP_STOP_HOOK_TRANSCRIPT" \
     '{transcript_path:$tp, session_id:"session_home"}')
-run_stop_hook_with_input "$AC21C_REPO" "$AC21C_INPUT"
+run_stop_hook_with_input "$PRE_LOOP_STOP_HOOK_REPO" "$PRE_LOOP_STOP_HOOK_INPUT"
 
 # With the pre-loop launch filtered out, the transcript has no in-loop
 # pending bg -> no short-circuit -> no marker written -> hook proceeds
 # to the normal flow (which will call Codex in this fixture).
-if [[ ! -f "$AC21C_MARKER" ]] && [[ -f "$RUN_MARKER" ]]; then
-    pass "AC-21c: pre-loop launch does not write bg-pending.marker; Codex runs"
+if [[ ! -f "$PRE_LOOP_STOP_HOOK_MARKER" ]] && [[ -f "$RUN_MARKER" ]]; then
+    pass "pre-loop launch does not write bg-pending.marker; Codex runs"
 else
-    fail "AC-21c: pre-loop launch does not write bg-pending.marker; Codex runs" \
+    fail "pre-loop launch does not write bg-pending.marker; Codex runs" \
         "no bg marker AND Codex invoked" \
-        "bg_marker=$(test -f "$AC21C_MARKER" && echo present || echo missing); codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing)"
+        "bg_marker=$(test -f "$PRE_LOOP_STOP_HOOK_MARKER" && echo present || echo missing); codex_marker=$(test -f "$RUN_MARKER" && echo present || echo missing)"
 fi
 
-# ---------------- AC-22 ----------------
+# ---------------- wrapper without session_id, pending bg ----------------
 # Wrapper without --session-id on a repo that has NO marker: should
 # behave just like the normal same-session path, i.e. a pending bg in
 # the transcript writes the marker and the wrapper output surfaces the
 # "background task" systemMessage. This confirms the ambiguous-caller
 # guard only fires on a pre-existing marker, not on every no-session
 # call.
-echo "Test AC-22: wrapper without session_id, no prior marker, pending bg -> ALLOW with systemMessage"
-AC22_REPO="$TEST_DIR/ac22"
-create_full_fixture "$AC22_REPO" > /dev/null
-AC22_LOOP="$AC22_REPO/.humanize/rlcr/2026-03-01_00-00-00"
-AC22_MARKER="$AC22_LOOP/bg-pending.marker"
-AC22_TRANSCRIPT="$TRANSCRIPTS_DIR/ac22.jsonl"
-AC22_LAUNCH=$(jq -c -n '{
+echo "Test: wrapper without session_id, no prior marker, pending bg -> ALLOW with systemMessage"
+WRAPPER_NO_SESSION_PENDING_REPO="$TEST_DIR/wrapper_no_session_pending"
+create_full_fixture "$WRAPPER_NO_SESSION_PENDING_REPO" > /dev/null
+WRAPPER_NO_SESSION_PENDING_LOOP="$WRAPPER_NO_SESSION_PENDING_REPO/.humanize/rlcr/2026-03-01_00-00-00"
+WRAPPER_NO_SESSION_PENDING_MARKER="$WRAPPER_NO_SESSION_PENDING_LOOP/bg-pending.marker"
+WRAPPER_NO_SESSION_PENDING_TRANSCRIPT="$TRANSCRIPTS_DIR/wrapper_no_session_pending.jsonl"
+WRAPPER_NO_SESSION_PENDING_LAUNCH=$(jq -c -n '{
     type:"user",
     timestamp:"2026-03-01T10:00:00.000Z",
     toolUseResult:{isAsync:true, agentId:"agent_wrapper_pending"}
 }')
-write_transcript "$AC22_TRANSCRIPT" "$AC22_LAUNCH"
+write_transcript "$WRAPPER_NO_SESSION_PENDING_TRANSCRIPT" "$WRAPPER_NO_SESSION_PENDING_LAUNCH"
 
-AC22_OUT="$TEST_DIR/ac22-out.txt"
+WRAPPER_NO_SESSION_PENDING_OUT="$TEST_DIR/wrapper_no_session_pending-out.txt"
 set +e
 (
-    cd "$AC22_REPO"
-    "$GATE_SCRIPT" --project-root "$AC22_REPO" --transcript-path "$AC22_TRANSCRIPT"
-) > "$AC22_OUT" 2>&1
-AC22_EXIT=$?
+    cd "$WRAPPER_NO_SESSION_PENDING_REPO"
+    "$GATE_SCRIPT" --project-root "$WRAPPER_NO_SESSION_PENDING_REPO" --transcript-path "$WRAPPER_NO_SESSION_PENDING_TRANSCRIPT"
+) > "$WRAPPER_NO_SESSION_PENDING_OUT" 2>&1
+WRAPPER_NO_SESSION_PENDING_EXIT=$?
 set -e
 
-if [[ "$AC22_EXIT" -eq 0 ]] \
-   && grep -q "^ALLOW:" "$AC22_OUT" \
-   && grep -q "background task" "$AC22_OUT" \
-   && [[ -f "$AC22_MARKER" ]]; then
-    pass "AC-22: wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage"
+if [[ "$WRAPPER_NO_SESSION_PENDING_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$WRAPPER_NO_SESSION_PENDING_OUT" \
+   && grep -q "background task" "$WRAPPER_NO_SESSION_PENDING_OUT" \
+   && [[ -f "$WRAPPER_NO_SESSION_PENDING_MARKER" ]]; then
+    pass "wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage"
 else
-    AC22_BODY=$(cat "$AC22_OUT" 2>/dev/null || true)
-    fail "AC-22: wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage" \
+    WRAPPER_NO_SESSION_PENDING_BODY=$(cat "$WRAPPER_NO_SESSION_PENDING_OUT" 2>/dev/null || true)
+    fail "wrapper without session_id + no prior marker + pending bg -> writes marker, surfaces systemMessage" \
         "exit 0 + ALLOW + 'background task' + marker written" \
-        "exit $AC22_EXIT; marker=$(test -f "$AC22_MARKER" && echo present || echo missing); output: $AC22_BODY"
+        "exit $WRAPPER_NO_SESSION_PENDING_EXIT; marker=$(test -f "$WRAPPER_NO_SESSION_PENDING_MARKER" && echo present || echo missing); output: $WRAPPER_NO_SESSION_PENDING_BODY"
 fi
 
-# AC-22b: wrapper without --session-id on a repo that ALREADY has a
+# wrapper without --session-id on a repo that ALREADY has a
 # marker (e.g. set up by a prior hook call). Must exit 0 silently -- no
 # systemMessage, no state mutation. Mirrors the real scenario Codex
 # flagged: rlcr-stop-gate.sh re-run by an unaware caller.
-echo "Test AC-22b: wrapper without session_id, prior marker -> silent ALLOW"
-AC22B_REPO="$TEST_DIR/ac22b"
-AC22B_LOOP=$(create_full_fixture "$AC22B_REPO")
-AC22B_STATE="$AC22B_LOOP/state.md"
-AC22B_MARKER="$AC22B_LOOP/bg-pending.marker"
-AC22B_BRANCH=$(git -C "$AC22B_REPO" rev-parse --abbrev-ref HEAD)
-AC22B_BASE_COMMIT=$(git -C "$AC22B_REPO" rev-parse HEAD)
-cat > "$AC22B_STATE" <<EOF_AC22B
+echo "Test: wrapper without session_id, prior marker -> silent ALLOW"
+WRAPPER_NO_SESSION_PRIOR_MARKER_REPO="$TEST_DIR/wrapper_no_session_prior_marker"
+WRAPPER_NO_SESSION_PRIOR_MARKER_LOOP=$(create_full_fixture "$WRAPPER_NO_SESSION_PRIOR_MARKER_REPO")
+WRAPPER_NO_SESSION_PRIOR_MARKER_STATE="$WRAPPER_NO_SESSION_PRIOR_MARKER_LOOP/state.md"
+WRAPPER_NO_SESSION_PRIOR_MARKER_MARKER="$WRAPPER_NO_SESSION_PRIOR_MARKER_LOOP/bg-pending.marker"
+WRAPPER_NO_SESSION_PRIOR_MARKER_BRANCH=$(git -C "$WRAPPER_NO_SESSION_PRIOR_MARKER_REPO" rev-parse --abbrev-ref HEAD)
+WRAPPER_NO_SESSION_PRIOR_MARKER_BASE_COMMIT=$(git -C "$WRAPPER_NO_SESSION_PRIOR_MARKER_REPO" rev-parse HEAD)
+cat > "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE" <<EOF_WRAPPER_NO_SESSION_PRIOR_MARKER
 ---
 current_round: 0
 max_iterations: 42
@@ -1372,91 +1462,503 @@ push_every_round: false
 full_review_round: 5
 plan_file: "plans/test-plan.md"
 plan_tracked: false
-start_branch: $AC22B_BRANCH
-base_branch: $AC22B_BRANCH
-base_commit: $AC22B_BASE_COMMIT
+start_branch: $WRAPPER_NO_SESSION_PRIOR_MARKER_BRANCH
+base_branch: $WRAPPER_NO_SESSION_PRIOR_MARKER_BRANCH
+base_commit: $WRAPPER_NO_SESSION_PRIOR_MARKER_BASE_COMMIT
 review_started: false
 ask_codex_question: false
 agent_teams: false
 session_id: session_alpha
 ---
-EOF_AC22B
-AC22B_STATE_HASH_BEFORE=$(sha256sum "$AC22B_STATE" | awk '{print $1}')
-: > "$AC22B_MARKER"
+EOF_WRAPPER_NO_SESSION_PRIOR_MARKER
+WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_BEFORE=$(sha256sum "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE" | awk '{print $1}')
+: > "$WRAPPER_NO_SESSION_PRIOR_MARKER_MARKER"
 
-AC22B_OUT="$TEST_DIR/ac22b-out.txt"
+WRAPPER_NO_SESSION_PRIOR_MARKER_OUT="$TEST_DIR/wrapper_no_session_prior_marker-out.txt"
 set +e
 (
-    cd "$AC22B_REPO"
-    "$GATE_SCRIPT" --project-root "$AC22B_REPO"
-) > "$AC22B_OUT" 2>&1
-AC22B_EXIT=$?
+    cd "$WRAPPER_NO_SESSION_PRIOR_MARKER_REPO"
+    "$GATE_SCRIPT" --project-root "$WRAPPER_NO_SESSION_PRIOR_MARKER_REPO"
+) > "$WRAPPER_NO_SESSION_PRIOR_MARKER_OUT" 2>&1
+WRAPPER_NO_SESSION_PRIOR_MARKER_EXIT=$?
 set -e
 
-AC22B_STATE_HASH_AFTER=$(sha256sum "$AC22B_STATE" | awk '{print $1}')
-if [[ "$AC22B_EXIT" -eq 0 ]] \
-   && grep -q "^ALLOW:" "$AC22B_OUT" \
-   && ! grep -qi "parked" "$AC22B_OUT" \
-   && [[ -f "$AC22B_MARKER" ]] \
-   && [[ "$AC22B_STATE_HASH_BEFORE" == "$AC22B_STATE_HASH_AFTER" ]]; then
-    pass "AC-22b: wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved"
+WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_AFTER=$(sha256sum "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE" | awk '{print $1}')
+if [[ "$WRAPPER_NO_SESSION_PRIOR_MARKER_EXIT" -eq 0 ]] \
+   && grep -q "^ALLOW:" "$WRAPPER_NO_SESSION_PRIOR_MARKER_OUT" \
+   && ! grep -qi "parked" "$WRAPPER_NO_SESSION_PRIOR_MARKER_OUT" \
+   && [[ -f "$WRAPPER_NO_SESSION_PRIOR_MARKER_MARKER" ]] \
+   && [[ "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_BEFORE" == "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_AFTER" ]]; then
+    pass "wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved"
 else
-    AC22B_BODY=$(cat "$AC22B_OUT" 2>/dev/null || true)
-    fail "AC-22b: wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved" \
+    WRAPPER_NO_SESSION_PRIOR_MARKER_BODY=$(cat "$WRAPPER_NO_SESSION_PRIOR_MARKER_OUT" 2>/dev/null || true)
+    fail "wrapper without session_id + existing marker -> silent ALLOW; marker and state preserved" \
         "exit 0 + ALLOW: (no 'parked') + marker kept + state.md byte-identical" \
-        "exit $AC22B_EXIT; marker=$(test -f "$AC22B_MARKER" && echo present || echo missing); state_unchanged=$([[ "$AC22B_STATE_HASH_BEFORE" == "$AC22B_STATE_HASH_AFTER" ]] && echo yes || echo no); output: $AC22B_BODY"
+        "exit $WRAPPER_NO_SESSION_PRIOR_MARKER_EXIT; marker=$(test -f "$WRAPPER_NO_SESSION_PRIOR_MARKER_MARKER" && echo present || echo missing); state_unchanged=$([[ "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_BEFORE" == "$WRAPPER_NO_SESSION_PRIOR_MARKER_STATE_HASH_AFTER" ]] && echo yes || echo no); output: $WRAPPER_NO_SESSION_PRIOR_MARKER_BODY"
 fi
 
-# ---------------- AC-23 ----------------
+# ---------------- alive task still short-circuits ----------------
 # Liveness probe positive: a pending task whose output file is open by at
 # least one process (lsof exits 0) must still be treated as running.
 # The short-circuit must fire and emit a systemMessage.
-echo "Test AC-23: liveness probe - alive task (lsof has holder) -> still short-circuits"
-AC23_REPO="$TEST_DIR/ac23"
-AC23_LOOP=$(create_full_fixture "$AC23_REPO")
-AC23_STATE="$AC23_LOOP/state.md"
-AC23_TRANSCRIPT="$TRANSCRIPTS_DIR/ac23.jsonl"
-AC23_TASK_ID="agent_probe_alive"
-AC23_LAUNCH=$(emit_tool_use_assistant "toolu_AC23" "Agent" ',"description":"x","prompt":"x"')
-AC23_RESULT=$(emit_async_agent_launch_result "toolu_AC23" "$AC23_TASK_ID")
-write_transcript "$AC23_TRANSCRIPT" "$AC23_LAUNCH" "$AC23_RESULT"
+echo "Test: liveness probe - alive task (lsof has holder) -> still short-circuits"
+ALIVE_TASK_SHORT_CIRCUITS_REPO="$TEST_DIR/alive_task_short_circuits"
+ALIVE_TASK_SHORT_CIRCUITS_LOOP=$(create_full_fixture "$ALIVE_TASK_SHORT_CIRCUITS_REPO")
+ALIVE_TASK_SHORT_CIRCUITS_STATE="$ALIVE_TASK_SHORT_CIRCUITS_LOOP/state.md"
+ALIVE_TASK_SHORT_CIRCUITS_TRANSCRIPT="$TRANSCRIPTS_DIR/alive_task_short_circuits.jsonl"
+ALIVE_TASK_SHORT_CIRCUITS_TASK_ID="agent_probe_alive"
+ALIVE_TASK_SHORT_CIRCUITS_LAUNCH=$(emit_tool_use_assistant "toolu_ALIVE_TASK_SHORT_CIRCUITS" "Agent" ',"description":"x","prompt":"x"')
+ALIVE_TASK_SHORT_CIRCUITS_RESULT=$(emit_async_agent_launch_result "toolu_ALIVE_TASK_SHORT_CIRCUITS" "$ALIVE_TASK_SHORT_CIRCUITS_TASK_ID")
+write_transcript "$ALIVE_TASK_SHORT_CIRCUITS_TRANSCRIPT" "$ALIVE_TASK_SHORT_CIRCUITS_LAUNCH" "$ALIVE_TASK_SHORT_CIRCUITS_RESULT"
 
-AC23_UID=$(id -u)
-AC23_SLUG=$(basename "$TRANSCRIPTS_DIR")
-AC23_TASKS_DIR="/tmp/claude-${AC23_UID}/${AC23_SLUG}/ac23/tasks"
-mkdir -p "$AC23_TASKS_DIR"
-touch "$AC23_TASKS_DIR/${AC23_TASK_ID}.output"
+ALIVE_TASK_SHORT_CIRCUITS_UID=$(id -u)
+ALIVE_TASK_SHORT_CIRCUITS_SLUG=$(basename "$TRANSCRIPTS_DIR")
+ALIVE_TASK_SHORT_CIRCUITS_TASKS_DIR="/tmp/claude-${ALIVE_TASK_SHORT_CIRCUITS_UID}/${ALIVE_TASK_SHORT_CIRCUITS_SLUG}/alive_task_short_circuits/tasks"
+mkdir -p "$ALIVE_TASK_SHORT_CIRCUITS_TASKS_DIR"
+touch "$ALIVE_TASK_SHORT_CIRCUITS_TASKS_DIR/${ALIVE_TASK_SHORT_CIRCUITS_TASK_ID}.output"
 
-AC23_INPUT=$(jq -c -n --arg tp "$AC23_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC23_REPO" "$AC23_INPUT" "" "$TEST_DIR/bin/lsof-alive"
-rm -rf "/tmp/claude-${AC23_UID}/${AC23_SLUG}/ac23" 2>/dev/null || true
+ALIVE_TASK_SHORT_CIRCUITS_INPUT=$(jq -c -n --arg tp "$ALIVE_TASK_SHORT_CIRCUITS_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$ALIVE_TASK_SHORT_CIRCUITS_REPO" "$ALIVE_TASK_SHORT_CIRCUITS_INPUT" "" "$TEST_DIR/bin/lsof-alive"
+rm -rf "/tmp/claude-${ALIVE_TASK_SHORT_CIRCUITS_UID}/${ALIVE_TASK_SHORT_CIRCUITS_SLUG}/alive_task_short_circuits" 2>/dev/null || true
 assert_systemmessage_only \
-    "AC-23: alive task (lsof has holder) still triggers short-circuit" \
-    "$AC23_REPO" "$AC23_STATE" "1 background task"
+    "alive task (lsof has holder) still triggers short-circuit" \
+    "$ALIVE_TASK_SHORT_CIRCUITS_REPO" "$ALIVE_TASK_SHORT_CIRCUITS_STATE" "1 background task"
 
-# ---------------- AC-24 ----------------
+# ---------------- dead/orphaned task pruned ----------------
 # Liveness probe negative: a pending task whose output file has no open
 # file descriptors (lsof exits 1) was killed without a completion event.
 # The probe must drop it so the hook proceeds to normal Codex review.
-echo "Test AC-24: liveness probe - dead/orphaned task (lsof no holder) -> reaches Codex"
-AC24_REPO="$TEST_DIR/ac24"
-create_full_fixture "$AC24_REPO" > /dev/null
-AC24_TRANSCRIPT="$TRANSCRIPTS_DIR/ac24.jsonl"
-AC24_TASK_ID="agent_probe_dead"
-AC24_LAUNCH=$(emit_tool_use_assistant "toolu_AC24" "Agent" ',"description":"x","prompt":"x"')
-AC24_RESULT=$(emit_async_agent_launch_result "toolu_AC24" "$AC24_TASK_ID")
-write_transcript "$AC24_TRANSCRIPT" "$AC24_LAUNCH" "$AC24_RESULT"
+echo "Test: liveness probe - dead/orphaned task (lsof no holder) -> reaches Codex"
+DEAD_TASK_PRUNED_REPO="$TEST_DIR/dead_task_pruned"
+create_full_fixture "$DEAD_TASK_PRUNED_REPO" > /dev/null
+DEAD_TASK_PRUNED_TRANSCRIPT="$TRANSCRIPTS_DIR/dead_task_pruned.jsonl"
+DEAD_TASK_PRUNED_TASK_ID="agent_probe_dead"
+DEAD_TASK_PRUNED_LAUNCH=$(emit_tool_use_assistant "toolu_DEAD_TASK_PRUNED" "Agent" ',"description":"x","prompt":"x"')
+DEAD_TASK_PRUNED_RESULT=$(emit_async_agent_launch_result "toolu_DEAD_TASK_PRUNED" "$DEAD_TASK_PRUNED_TASK_ID")
+write_transcript "$DEAD_TASK_PRUNED_TRANSCRIPT" "$DEAD_TASK_PRUNED_LAUNCH" "$DEAD_TASK_PRUNED_RESULT"
 
-AC24_UID=$(id -u)
-AC24_SLUG=$(basename "$TRANSCRIPTS_DIR")
-AC24_TASKS_DIR="/tmp/claude-${AC24_UID}/${AC24_SLUG}/ac24/tasks"
-mkdir -p "$AC24_TASKS_DIR"
-touch "$AC24_TASKS_DIR/${AC24_TASK_ID}.output"
+DEAD_TASK_PRUNED_UID=$(id -u)
+DEAD_TASK_PRUNED_SLUG=$(basename "$TRANSCRIPTS_DIR")
+DEAD_TASK_PRUNED_TASKS_DIR="/tmp/claude-${DEAD_TASK_PRUNED_UID}/${DEAD_TASK_PRUNED_SLUG}/dead_task_pruned/tasks"
+mkdir -p "$DEAD_TASK_PRUNED_TASKS_DIR"
+touch "$DEAD_TASK_PRUNED_TASKS_DIR/${DEAD_TASK_PRUNED_TASK_ID}.output"
 
-AC24_INPUT=$(jq -c -n --arg tp "$AC24_TRANSCRIPT" '{transcript_path:$tp}')
-run_stop_hook_with_input "$AC24_REPO" "$AC24_INPUT" "" "$TEST_DIR/bin/lsof-dead"
-rm -rf "/tmp/claude-${AC24_UID}/${AC24_SLUG}/ac24" 2>/dev/null || true
-assert_reached_codex "AC-24: dead/orphaned task (lsof no holder) is pruned; Codex review runs"
+DEAD_TASK_PRUNED_INPUT=$(jq -c -n --arg tp "$DEAD_TASK_PRUNED_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$DEAD_TASK_PRUNED_REPO" "$DEAD_TASK_PRUNED_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${DEAD_TASK_PRUNED_UID}/${DEAD_TASK_PRUNED_SLUG}/dead_task_pruned" 2>/dev/null || true
+assert_reached_codex "dead/orphaned task (lsof no holder) is pruned; Codex review runs"
+
+# ---------------- session-resume real output path ----------------
+# Session resume regression: when Claude resumes a session, the current
+# transcript file has a NEW session id, but background tasks launched
+# earlier physically wrote their .output files under the OLD session
+# directory. The transcript launch message records the real path. The
+# liveness probe must look at that real path, not at a path derived
+# from the current transcript's session id, or orphaned dead tasks are
+# never pruned.
+echo "Test: liveness probe follows real output path from transcript on session resume"
+SESSION_RESUME_REAL_PATH_REPO="$TEST_DIR/session_resume_real_path"
+create_full_fixture "$SESSION_RESUME_REAL_PATH_REPO" > /dev/null
+SESSION_RESUME_REAL_PATH_UID=$(id -u)
+SESSION_RESUME_REAL_PATH_SLUG=$(basename "$TRANSCRIPTS_DIR")
+SESSION_RESUME_REAL_PATH_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+SESSION_RESUME_REAL_PATH_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+SESSION_RESUME_REAL_PATH_TASK_ID="shell_resumed_session"
+SESSION_RESUME_REAL_PATH_REAL_OUTPUT="/tmp/claude-${SESSION_RESUME_REAL_PATH_UID}/${SESSION_RESUME_REAL_PATH_SLUG}/${SESSION_RESUME_REAL_PATH_OLD_SESSION}/tasks/${SESSION_RESUME_REAL_PATH_TASK_ID}.output"
+
+# Build the launch event with the real (old-session) output path embedded
+# in the Claude Code launch message.
+SESSION_RESUME_REAL_PATH_LAUNCH=$(emit_tool_use_assistant "toolu_SESSION_RESUME_REAL_PATH" "Bash" ',"command":"sleep 30"')
+SESSION_RESUME_REAL_PATH_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_SESSION_RESUME_REAL_PATH" "$SESSION_RESUME_REAL_PATH_TASK_ID" "$SESSION_RESUME_REAL_PATH_REAL_OUTPUT")
+
+# Write the transcript under the NEW session id (resume session).
+SESSION_RESUME_REAL_PATH_TRANSCRIPT="/tmp/claude-${SESSION_RESUME_REAL_PATH_UID}/${SESSION_RESUME_REAL_PATH_SLUG}/${SESSION_RESUME_REAL_PATH_NEW_SESSION}.jsonl"
+write_transcript "$SESSION_RESUME_REAL_PATH_TRANSCRIPT" "$SESSION_RESUME_REAL_PATH_LAUNCH" "$SESSION_RESUME_REAL_PATH_RESULT"
+
+# The real output file lives in the OLD session directory.
+mkdir -p "$(dirname "$SESSION_RESUME_REAL_PATH_REAL_OUTPUT")"
+touch "$SESSION_RESUME_REAL_PATH_REAL_OUTPUT"
+
+SESSION_RESUME_REAL_PATH_INPUT=$(jq -c -n --arg tp "$SESSION_RESUME_REAL_PATH_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$SESSION_RESUME_REAL_PATH_REPO" "$SESSION_RESUME_REAL_PATH_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${SESSION_RESUME_REAL_PATH_UID}/${SESSION_RESUME_REAL_PATH_SLUG}/${SESSION_RESUME_REAL_PATH_OLD_SESSION}" \
+       "/tmp/claude-${SESSION_RESUME_REAL_PATH_UID}/${SESSION_RESUME_REAL_PATH_SLUG}/${SESSION_RESUME_REAL_PATH_NEW_SESSION}.jsonl" 2>/dev/null || true
+assert_reached_codex "dead task pruned using real output path from transcript, not derived new-session path"
+
+# ---------------- whitespace in recorded output path ----------------
+# Same as session-resume real output path, but the recorded output path contains a space. The
+# regex used to extract the path must not stop at the first whitespace
+# token, or it will fall back to the derived new-session path and the
+# dead task will never be pruned.
+echo "Test: liveness probe handles whitespace in recorded output path"
+WHITESPACE_OUTPUT_PATH_REPO="$TEST_DIR/whitespace_output_path"
+create_full_fixture "$WHITESPACE_OUTPUT_PATH_REPO" > /dev/null
+WHITESPACE_OUTPUT_PATH_UID=$(id -u)
+WHITESPACE_OUTPUT_PATH_SLUG=$(basename "$TRANSCRIPTS_DIR")
+WHITESPACE_OUTPUT_PATH_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+WHITESPACE_OUTPUT_PATH_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+WHITESPACE_OUTPUT_PATH_TASK_ID="shell_resumed_session_space"
+WHITESPACE_OUTPUT_PATH_REAL_OUTPUT="/tmp/claude-${WHITESPACE_OUTPUT_PATH_UID}/${WHITESPACE_OUTPUT_PATH_SLUG}/${WHITESPACE_OUTPUT_PATH_OLD_SESSION}/tasks/with space/${WHITESPACE_OUTPUT_PATH_TASK_ID}.output"
+
+WHITESPACE_OUTPUT_PATH_LAUNCH=$(emit_tool_use_assistant "toolu_WHITESPACE_OUTPUT_PATH" "Bash" ',"command":"sleep 30"')
+WHITESPACE_OUTPUT_PATH_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_WHITESPACE_OUTPUT_PATH" "$WHITESPACE_OUTPUT_PATH_TASK_ID" "$WHITESPACE_OUTPUT_PATH_REAL_OUTPUT")
+
+WHITESPACE_OUTPUT_PATH_TRANSCRIPT="/tmp/claude-${WHITESPACE_OUTPUT_PATH_UID}/${WHITESPACE_OUTPUT_PATH_SLUG}/${WHITESPACE_OUTPUT_PATH_NEW_SESSION}.jsonl"
+write_transcript "$WHITESPACE_OUTPUT_PATH_TRANSCRIPT" "$WHITESPACE_OUTPUT_PATH_LAUNCH" "$WHITESPACE_OUTPUT_PATH_RESULT"
+
+mkdir -p "$(dirname "$WHITESPACE_OUTPUT_PATH_REAL_OUTPUT")"
+touch "$WHITESPACE_OUTPUT_PATH_REAL_OUTPUT"
+
+WHITESPACE_OUTPUT_PATH_INPUT=$(jq -c -n --arg tp "$WHITESPACE_OUTPUT_PATH_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$WHITESPACE_OUTPUT_PATH_REPO" "$WHITESPACE_OUTPUT_PATH_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${WHITESPACE_OUTPUT_PATH_UID}/${WHITESPACE_OUTPUT_PATH_SLUG}/${WHITESPACE_OUTPUT_PATH_OLD_SESSION}" \
+       "/tmp/claude-${WHITESPACE_OUTPUT_PATH_UID}/${WHITESPACE_OUTPUT_PATH_SLUG}/${WHITESPACE_OUTPUT_PATH_NEW_SESSION}.jsonl" 2>/dev/null || true
+assert_reached_codex "dead task pruned when real output path contains whitespace"
+
+# ---- TaskStop tool_result: task recognised completed (end-to-end) ----
+# TaskStop recognition: when a background task is stopped via the TaskStop
+# tool, Claude Code records a top-level .toolUseResult whose .message is
+# "Successfully stopped task: <id>". Many builds do NOT also emit a
+# task_notification system event for a TaskStop, so the helper must treat
+# this record as terminal or the stopped task pins the loop forever. This
+# is the exact regression observed in a real resumed session where a
+# stopped shell kept the RLCR loop reporting "1 background task still
+# running" minutes after the stop.
+echo "Test: TaskStop tool_result marks the task completed -> reaches Codex"
+TASKSTOP_E2E_REPO="$TEST_DIR/taskstop_e2e"
+create_full_fixture "$TASKSTOP_E2E_REPO" > /dev/null
+TASKSTOP_E2E_TRANSCRIPT="$TRANSCRIPTS_DIR/taskstop_e2e.jsonl"
+TASKSTOP_E2E_LAUNCH=$(emit_tool_use_assistant "toolu_taskstop_e2e" "Bash" ',"command":"sleep 30"')
+TASKSTOP_E2E_RESULT=$(emit_bg_shell_launch_result "toolu_taskstop_e2e" "shell_taskstop_e2e")
+TASKSTOP_E2E_STOP=$(emit_task_stop_result "toolu_taskstop_e2e" "shell_taskstop_e2e")
+write_transcript "$TASKSTOP_E2E_TRANSCRIPT" "$TASKSTOP_E2E_LAUNCH" "$TASKSTOP_E2E_RESULT" "$TASKSTOP_E2E_STOP"
+
+TASKSTOP_E2E_INPUT=$(jq -c -n --arg tp "$TASKSTOP_E2E_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$TASKSTOP_E2E_REPO" "$TASKSTOP_E2E_INPUT"
+assert_reached_codex "TaskStop result lets the hook proceed to Codex review"
+
+# ---- TaskStop tool_result: helper drops task from pending ----
+# Helper-level: a TaskStop'd task with no task_notification system event
+# and no legacy queue-operation record must still drop out of the pending
+# set. Guards the TaskStop completion source directly.
+echo "Test: helper drops a TaskStop'd task with no task_notification"
+TASKSTOP_HELPER_TRANSCRIPT="$TRANSCRIPTS_DIR/taskstop_helper.jsonl"
+TASKSTOP_HELPER_LAUNCH=$(emit_tool_use_assistant "toolu_taskstop_helper" "Agent" ',"description":"x","prompt":"x"')
+TASKSTOP_HELPER_RESULT=$(emit_async_agent_launch_result "toolu_taskstop_helper" "agent_taskstop_helper")
+TASKSTOP_HELPER_STOP=$(emit_task_stop_result "toolu_taskstop_helper" "agent_taskstop_helper")
+write_transcript "$TASKSTOP_HELPER_TRANSCRIPT" "$TASKSTOP_HELPER_LAUNCH" "$TASKSTOP_HELPER_RESULT" "$TASKSTOP_HELPER_STOP"
+
+TASKSTOP_HELPER_PENDING=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$TASKSTOP_HELPER_TRANSCRIPT" 2>/dev/null
+)
+if [[ -z "$TASKSTOP_HELPER_PENDING" ]]; then
+    pass "TaskStop result (no task_notification) removes the task from pending"
+else
+    fail "TaskStop result (no task_notification) removes the task from pending" \
+        "empty pending list" "got: $TASKSTOP_HELPER_PENDING"
+fi
+
+# ---- TaskStop with id in message only (fallback to message parsing) ----
+# Some Claude Code builds record the stopped id only inside the message
+# text and omit the separate .toolUseResult.task_id field. Source 3 must
+# fall back to parsing the id out of the message, or such a stopped task is
+# never recognised and pins the loop forever.
+echo "Test: TaskStop with id only in message still marks task completed -> reaches Codex"
+TASKSTOP_MSGONLY_REPO="$TEST_DIR/taskstop_msgonly"
+create_full_fixture "$TASKSTOP_MSGONLY_REPO" > /dev/null
+TASKSTOP_MSGONLY_TRANSCRIPT="$TRANSCRIPTS_DIR/taskstop_msgonly.jsonl"
+TASKSTOP_MSGONLY_LAUNCH=$(emit_tool_use_assistant "toolu_taskstop_msgonly" "Bash" ',"command":"sleep 30"')
+TASKSTOP_MSGONLY_RESULT=$(emit_bg_shell_launch_result "toolu_taskstop_msgonly" "shell_taskstop_msgonly")
+TASKSTOP_MSGONLY_STOP=$(emit_task_stop_result_message_only "toolu_taskstop_msgonly" "shell_taskstop_msgonly")
+write_transcript "$TASKSTOP_MSGONLY_TRANSCRIPT" "$TASKSTOP_MSGONLY_LAUNCH" "$TASKSTOP_MSGONLY_RESULT" "$TASKSTOP_MSGONLY_STOP"
+
+TASKSTOP_MSGONLY_INPUT=$(jq -c -n --arg tp "$TASKSTOP_MSGONLY_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$TASKSTOP_MSGONLY_REPO" "$TASKSTOP_MSGONLY_INPUT"
+assert_reached_codex "TaskStop with id only in message proceeds to Codex review"
+
+echo "Test: helper drops a TaskStop'd task whose id is only in the message"
+TASKSTOP_MSGONLY_HELPER_TRANSCRIPT="$TRANSCRIPTS_DIR/taskstop_msgonly_helper.jsonl"
+TASKSTOP_MSGONLY_HELPER_LAUNCH=$(emit_tool_use_assistant "toolu_taskstop_msgonly_h" "Agent" ',"description":"x","prompt":"x"')
+TASKSTOP_MSGONLY_HELPER_RESULT=$(emit_async_agent_launch_result "toolu_taskstop_msgonly_h" "agent_taskstop_msgonly_h")
+TASKSTOP_MSGONLY_HELPER_STOP=$(emit_task_stop_result_message_only "toolu_taskstop_msgonly_h" "agent_taskstop_msgonly_h")
+write_transcript "$TASKSTOP_MSGONLY_HELPER_TRANSCRIPT" "$TASKSTOP_MSGONLY_HELPER_LAUNCH" "$TASKSTOP_MSGONLY_HELPER_RESULT" "$TASKSTOP_MSGONLY_HELPER_STOP"
+
+TASKSTOP_MSGONLY_HELPER_PENDING=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$TASKSTOP_MSGONLY_HELPER_TRANSCRIPT" 2>/dev/null
+)
+if [[ -z "$TASKSTOP_MSGONLY_HELPER_PENDING" ]]; then
+    pass "TaskStop result (id only in message) removes the task from pending"
+else
+    fail "TaskStop result (id only in message) removes the task from pending" \
+        "empty pending list" "got: $TASKSTOP_MSGONLY_HELPER_PENDING"
+fi
+
+# ---- TaskStop scan tolerates structured messages on unrelated tool_results ----
+# Source 3 iterates every .toolUseResult and calls `contains()` on .message.
+# An unrelated tool_result whose .message is an object/array/number would make
+# jq error; because the completion pipeline falls back to `completed=""`, that
+# error wipes valid SDK/legacy completions and makes completed tasks pending
+# again. The fix coerces .message to a string before `contains()`.
+echo "Test: helper tolerates non-string .message on unrelated tool_results"
+NONSTRING_MSG_REPO="$TEST_DIR/nonstring_msg"
+create_full_fixture "$NONSTRING_MSG_REPO" > /dev/null
+NONSTRING_MSG_TRANSCRIPT="$TRANSCRIPTS_DIR/nonstring_msg.jsonl"
+NONSTRING_MSG_LAUNCH=$(emit_tool_use_assistant "toolu_nonstring" "Agent" ',"description":"x","prompt":"x"')
+NONSTRING_MSG_RESULT=$(emit_async_agent_launch_result "toolu_nonstring" "agent_nonstring")
+NONSTRING_MSG_COMPLETE=$(emit_sdk_task_notification "agent_nonstring" "toolu_nonstring" "completed")
+NONSTRING_MSG_NOISE=$(emit_tool_result_nonstring_message "toolu_noise")
+write_transcript "$NONSTRING_MSG_TRANSCRIPT" "$NONSTRING_MSG_LAUNCH" "$NONSTRING_MSG_RESULT" "$NONSTRING_MSG_COMPLETE" "$NONSTRING_MSG_NOISE"
+
+NONSTRING_MSG_PENDING=$(
+    # shellcheck source=/dev/null
+    source "$PROJECT_ROOT/hooks/lib/loop-common.sh"
+    list_pending_background_task_ids "$NONSTRING_MSG_TRANSCRIPT" 2>/dev/null
+)
+if [[ -z "$NONSTRING_MSG_PENDING" ]]; then
+    pass "non-string .message on unrelated tool_result does not poison completions"
+else
+    fail "non-string .message on unrelated tool_result does not poison completions" \
+        "empty pending list" "got: $NONSTRING_MSG_PENDING"
+fi
+
+# ---- cross-session output glob: dead task pruned when transcript has no path ----
+# Fix B - cross-session output glob. On session resume the current
+# transcript has a NEW session id while the task's .output file lives
+# under the OLD session dir. When the launch message carries no
+# extractable output path, the session-derived path points at the wrong
+# (new) session and does not exist. The liveness probe must then search
+# sibling session dirs under the same project slug, find the real
+# (old-session) file, and let lsof prune the dead task - instead of
+# failing open and pinning the loop forever.
+echo "Test: cross-session output glob prunes dead task when transcript has no path"
+CROSSSESSION_GLOB_REPO="$TEST_DIR/crosssession_glob"
+create_full_fixture "$CROSSSESSION_GLOB_REPO" > /dev/null
+CROSSSESSION_GLOB_UID=$(id -u)
+CROSSSESSION_GLOB_SLUG=$(basename "$TRANSCRIPTS_DIR")
+CROSSSESSION_GLOB_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+CROSSSESSION_GLOB_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+CROSSSESSION_GLOB_TASK_ID="shell_glob_cross_session"
+CROSSSESSION_GLOB_REAL_OUTPUT="/tmp/claude-${CROSSSESSION_GLOB_UID}/${CROSSSESSION_GLOB_SLUG}/${CROSSSESSION_GLOB_OLD_SESSION}/tasks/${CROSSSESSION_GLOB_TASK_ID}.output"
+
+# Launch result WITHOUT the embedded output path so transcript extraction
+# returns empty, forcing the session-derived path (and thus the Fix B glob).
+CROSSSESSION_GLOB_LAUNCH=$(emit_tool_use_assistant "toolu_glob" "Bash" ',"command":"sleep 30"')
+CROSSSESSION_GLOB_RESULT=$(emit_bg_shell_launch_result "toolu_glob" "$CROSSSESSION_GLOB_TASK_ID")
+
+CROSSSESSION_GLOB_TRANSCRIPT="/tmp/claude-${CROSSSESSION_GLOB_UID}/${CROSSSESSION_GLOB_SLUG}/${CROSSSESSION_GLOB_NEW_SESSION}.jsonl"
+write_transcript "$CROSSSESSION_GLOB_TRANSCRIPT" "$CROSSSESSION_GLOB_LAUNCH" "$CROSSSESSION_GLOB_RESULT"
+
+# Real output file lives in the OLD session dir; the NEW session dir is
+# never created, so the session-derived path does not exist.
+mkdir -p "$(dirname "$CROSSSESSION_GLOB_REAL_OUTPUT")"
+touch "$CROSSSESSION_GLOB_REAL_OUTPUT"
+
+CROSSSESSION_GLOB_INPUT=$(jq -c -n --arg tp "$CROSSSESSION_GLOB_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$CROSSSESSION_GLOB_REPO" "$CROSSSESSION_GLOB_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${CROSSSESSION_GLOB_UID}/${CROSSSESSION_GLOB_SLUG}/${CROSSSESSION_GLOB_OLD_SESSION}" \
+       "/tmp/claude-${CROSSSESSION_GLOB_UID}/${CROSSSESSION_GLOB_SLUG}/${CROSSSESSION_GLOB_NEW_SESSION}.jsonl" 2>/dev/null || true
+assert_reached_codex "dead task pruned via cross-session glob when transcript has no output path"
+
+# ---- cross-session output glob: alive task is NOT wrongly pruned ----
+# Fix B safety property: the cross-session glob only EXPANDS where we look
+# for the .output file. When the glob finds the real (old-session) file and
+# lsof still sees an open fd, the task is genuinely alive and must
+# short-circuit - never be pruned.
+#
+# This case is the gap the dead-glob test above cannot close: when the
+# derived path is absent, is_bg_task_alive FAILS OPEN (returns alive) if the
+# glob never finds the file. So "alive -> short-circuit" alone is a tautology
+# here - it passes whether or not the glob ran. A lsof SPY is therefore
+# required: the spy records the path it was asked to probe, then reports
+# alive. If the glob located the old-session .output, lsof is invoked on
+# that real path; if the glob was bypassed, fail-open returns before lsof
+# is ever called and the probe log stays empty.
+echo "Test: cross-session output glob keeps alive task (lsof holder) -> short-circuits"
+CROSSSESSION_GLOB_ALIVE_REPO="$TEST_DIR/crosssession_glob_alive"
+CROSSSESSION_GLOB_ALIVE_LOOP=$(create_full_fixture "$CROSSSESSION_GLOB_ALIVE_REPO")
+CROSSSESSION_GLOB_ALIVE_STATE="$CROSSSESSION_GLOB_ALIVE_LOOP/state.md"
+CROSSSESSION_GLOB_ALIVE_UID=$(id -u)
+CROSSSESSION_GLOB_ALIVE_SLUG=$(basename "$TRANSCRIPTS_DIR")
+CROSSSESSION_GLOB_ALIVE_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+CROSSSESSION_GLOB_ALIVE_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+CROSSSESSION_GLOB_ALIVE_TASK_ID="shell_glob_cross_session_alive"
+CROSSSESSION_GLOB_ALIVE_REAL_OUTPUT="/tmp/claude-${CROSSSESSION_GLOB_ALIVE_UID}/${CROSSSESSION_GLOB_ALIVE_SLUG}/${CROSSSESSION_GLOB_ALIVE_OLD_SESSION}/tasks/${CROSSSESSION_GLOB_ALIVE_TASK_ID}.output"
+
+# lsof spy: logs the probed path, then reports the task alive (exit 0).
+CROSSSESSION_GLOB_ALIVE_LSOF_LOG="$TEST_DIR/lsof_glob_alive.log"
+rm -f "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG"
+cat > "$TEST_DIR/bin/lsof-glob-alive-spy" << EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG"
+exit 0
+EOF
+chmod +x "$TEST_DIR/bin/lsof-glob-alive-spy"
+
+# Launch result WITHOUT the embedded output path so transcript extraction
+# returns empty, forcing the session-derived path (and thus the Fix B glob).
+CROSSSESSION_GLOB_ALIVE_LAUNCH=$(emit_tool_use_assistant "toolu_glob_alive" "Bash" ',"command":"sleep 30"')
+CROSSSESSION_GLOB_ALIVE_RESULT=$(emit_bg_shell_launch_result "toolu_glob_alive" "$CROSSSESSION_GLOB_ALIVE_TASK_ID")
+
+CROSSSESSION_GLOB_ALIVE_TRANSCRIPT="/tmp/claude-${CROSSSESSION_GLOB_ALIVE_UID}/${CROSSSESSION_GLOB_ALIVE_SLUG}/${CROSSSESSION_GLOB_ALIVE_NEW_SESSION}.jsonl"
+write_transcript "$CROSSSESSION_GLOB_ALIVE_TRANSCRIPT" "$CROSSSESSION_GLOB_ALIVE_LAUNCH" "$CROSSSESSION_GLOB_ALIVE_RESULT"
+
+# Real output file lives in the OLD session dir; the NEW session dir is
+# never created, so the session-derived path does not exist and the glob
+# must find the old-session file instead.
+mkdir -p "$(dirname "$CROSSSESSION_GLOB_ALIVE_REAL_OUTPUT")"
+touch "$CROSSSESSION_GLOB_ALIVE_REAL_OUTPUT"
+
+CROSSSESSION_GLOB_ALIVE_INPUT=$(jq -c -n --arg tp "$CROSSSESSION_GLOB_ALIVE_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$CROSSSESSION_GLOB_ALIVE_REPO" "$CROSSSESSION_GLOB_ALIVE_INPUT" "" "$TEST_DIR/bin/lsof-glob-alive-spy"
+rm -rf "/tmp/claude-${CROSSSESSION_GLOB_ALIVE_UID}/${CROSSSESSION_GLOB_ALIVE_SLUG}/${CROSSSESSION_GLOB_ALIVE_OLD_SESSION}" \
+       "/tmp/claude-${CROSSSESSION_GLOB_ALIVE_UID}/${CROSSSESSION_GLOB_ALIVE_SLUG}/${CROSSSESSION_GLOB_ALIVE_NEW_SESSION}.jsonl" 2>/dev/null || true
+rm -f "$TEST_DIR/bin/lsof-glob-alive-spy"
+
+# The task is alive, so the hook must short-circuit (no Codex).
+assert_systemmessage_only \
+    "alive task found via cross-session glob still short-circuits" \
+    "$CROSSSESSION_GLOB_ALIVE_REPO" "$CROSSSESSION_GLOB_ALIVE_STATE" "1 background task"
+
+# The real guard: lsof must actually have been invoked on the old-session
+# .output path. An empty/non-matching log means the glob was bypassed and
+# the short-circuit above only passed via fail-open (file-absent) - which
+# would hide a glob regression exactly like removing Fix B.
+if [[ -s "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG" ]] \
+   && grep -qF "$CROSSSESSION_GLOB_ALIVE_REAL_OUTPUT" "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG"; then
+    pass "cross-session glob located the old-session .output (lsof probed it)"
+else
+    fail "cross-session glob located the old-session .output (lsof probed it)" \
+        "lsof probe of $CROSSSESSION_GLOB_ALIVE_REAL_OUTPUT" \
+        "log empty or no match: $(cat "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG" 2>/dev/null)"
+fi
+rm -f "$CROSSSESSION_GLOB_ALIVE_LSOF_LOG"
+
+# ---------------- AC-25c ----------------
+# Some Claude Code launch records omit the trailing
+# "You will be notified when it completes." sentence. The path extractor must
+# still recover the real output path from the JSON string (bounded by the
+# closing quote) instead of returning no match. A no-match would make
+# is_bg_task_alive fall back to the derived current-session path, so the real
+# old-session output file is never probed and the dead task stays pending
+# forever -- the exact session-resume regression AC-25 guards against.
+echo "Test AC-25c: liveness probe recovers real path when launch message omits notification suffix"
+AC25C_REPO="$TEST_DIR/ac25c"
+create_full_fixture "$AC25C_REPO" > /dev/null
+AC25C_UID=$(id -u)
+AC25C_SLUG=$(basename "$TRANSCRIPTS_DIR")
+AC25C_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+AC25C_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+AC25C_TASK_ID="shell_resumed_session_no_suffix"
+AC25C_REAL_OUTPUT="/tmp/claude-${AC25C_UID}/${AC25C_SLUG}/${AC25C_OLD_SESSION}/tasks/${AC25C_TASK_ID}.output"
+
+AC25C_LAUNCH=$(emit_tool_use_assistant "toolu_AC25C" "Bash" ',"command":"sleep 30"')
+# Fourth arg "0" -> emit the launch message WITHOUT the notification suffix.
+AC25C_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_AC25C" "$AC25C_TASK_ID" "$AC25C_REAL_OUTPUT" 0)
+
+AC25C_TRANSCRIPT="/tmp/claude-${AC25C_UID}/${AC25C_SLUG}/${AC25C_NEW_SESSION}.jsonl"
+write_transcript "$AC25C_TRANSCRIPT" "$AC25C_LAUNCH" "$AC25C_RESULT"
+
+mkdir -p "$(dirname "$AC25C_REAL_OUTPUT")"
+touch "$AC25C_REAL_OUTPUT"
+
+AC25C_INPUT=$(jq -c -n --arg tp "$AC25C_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC25C_REPO" "$AC25C_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${AC25C_UID}/${AC25C_SLUG}/${AC25C_OLD_SESSION}" \
+       "/tmp/claude-${AC25C_UID}/${AC25C_SLUG}/${AC25C_NEW_SESSION}.jsonl" 2>/dev/null || true
+assert_reached_codex "AC-25c: dead task pruned when launch message omits the notification suffix"
+
+# ---------------- AC-25d ----------------
+# Task-id matching must be exact, not a substring match. When a pending id
+# is a prefix of another background task id (bash_1 vs bash_10), a bare
+# grep -F "$task_id" also matches the longer id's launch line. With the
+# dead superstring task (bash_10) launched earlier, head -n1 used to select
+# bash_10's output path, lsof then saw a closed file, and the still-running
+# bash_1 was pruned -- letting the stop hook reach Codex before bash_1
+# finished. The extractor must anchor on the exact backgroundTaskId value.
+echo "Test AC-25d: liveness probe matches exact task id (bash_1 not confused with bash_10)"
+AC25D_REPO="$TEST_DIR/ac25d"
+AC25D_LOOP=$(create_full_fixture "$AC25D_REPO")
+AC25D_STATE="$AC25D_LOOP/state.md"
+AC25D_TRANSCRIPT="$TRANSCRIPTS_DIR/ac25d.jsonl"
+
+# bash_10: dead (launched FIRST, output exists, no holder).
+# bash_1:  alive (launched SECOND, output exists, holder present).
+AC25D_DEAD_ID="bash_10"
+AC25D_ALIVE_ID="bash_1"
+AC25D_DEAD_OUTPUT="$TRANSCRIPTS_DIR/${AC25D_DEAD_ID}.output"
+AC25D_ALIVE_OUTPUT="$TRANSCRIPTS_DIR/${AC25D_ALIVE_ID}.output"
+
+# Dead task's launch line is written FIRST so the buggy substring grep
+# (grep -F "bash_1") would encounter it before the real bash_1 line and
+# pick its output path via head -n1.
+AC25D_DEAD_LAUNCH=$(emit_tool_use_assistant "toolu_AC25D_dead" "Bash" ',"command":"sleep 1"')
+AC25D_DEAD_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_AC25D_dead" "$AC25D_DEAD_ID" "$AC25D_DEAD_OUTPUT")
+AC25D_ALIVE_LAUNCH=$(emit_tool_use_assistant "toolu_AC25D_alive" "Bash" ',"command":"sleep 30"')
+AC25D_ALIVE_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_AC25D_alive" "$AC25D_ALIVE_ID" "$AC25D_ALIVE_OUTPUT")
+write_transcript "$AC25D_TRANSCRIPT" \
+    "$AC25D_DEAD_LAUNCH" "$AC25D_DEAD_RESULT" \
+    "$AC25D_ALIVE_LAUNCH" "$AC25D_ALIVE_RESULT"
+
+mkdir -p "$(dirname "$AC25D_DEAD_OUTPUT")"
+touch "$AC25D_DEAD_OUTPUT" "$AC25D_ALIVE_OUTPUT"
+
+# Selective lsof mock: alive (exit 0) only for the EXACT bash_1.output,
+# dead (exit 1) for every other file (including bash_10.output). The
+# */bash_1.output glob cannot match .../bash_10.output because the latter
+# has "0.output" immediately after "bash_1", not ".output".
+cat > "$TEST_DIR/bin/lsof-ac25d" << 'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    */bash_1.output) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$TEST_DIR/bin/lsof-ac25d"
+
+AC25D_INPUT=$(jq -c -n --arg tp "$AC25D_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC25D_REPO" "$AC25D_INPUT" "" "$TEST_DIR/bin/lsof-ac25d"
+rm -f "$AC25D_DEAD_OUTPUT" "$AC25D_ALIVE_OUTPUT" "$AC25D_TRANSCRIPT" "$TEST_DIR/bin/lsof-ac25d" 2>/dev/null || true
+# bash_1 is still alive -> short-circuit must fire and block Codex.
+assert_systemmessage_only \
+    "AC-25d: exact task-id match keeps alive bash_1 from being pruned as dead bash_10" \
+    "$AC25D_REPO" "$AC25D_STATE" "1 background task"
+
+# ---------------- AC-25e ----------------
+# When the recorded output path contains a character that JSON must escape
+# (a literal backslash in a directory name), the launch record stored in the
+# transcript doubles it to "\\". The extractor must decode the JSON string
+# before handing the path to lsof; reading the raw JSONL text returns the
+# escaped spelling, [[ -f ]] then misses the real file, the dead task is
+# treated as alive forever, and the stop hook never reaches Codex. This is
+# the JSON-decode counterpart of AC-25b's whitespace case.
+echo "Test AC-25e: liveness probe decodes JSON-escaped characters in recorded output path"
+AC25E_REPO="$TEST_DIR/ac25e"
+create_full_fixture "$AC25E_REPO" > /dev/null
+AC25E_UID=$(id -u)
+AC25E_SLUG=$(basename "$TRANSCRIPTS_DIR")
+AC25E_OLD_SESSION="aaaaaaaa-1111-2222-3333-444444444444"
+AC25E_NEW_SESSION="bbbbbbbb-5555-6666-7777-888888888888"
+AC25E_TASK_ID="shell_resumed_session_backslash"
+AC25E_REAL_OUTPUT="/tmp/claude-${AC25E_UID}/${AC25E_SLUG}/${AC25E_OLD_SESSION}/tasks/with\\backslash/${AC25E_TASK_ID}.output"
+
+AC25E_LAUNCH=$(emit_tool_use_assistant "toolu_AC25E" "Bash" ',"command":"sleep 30"')
+AC25E_RESULT=$(emit_bg_shell_launch_result_with_output_path "toolu_AC25E" "$AC25E_TASK_ID" "$AC25E_REAL_OUTPUT")
+
+AC25E_TRANSCRIPT="/tmp/claude-${AC25E_UID}/${AC25E_SLUG}/${AC25E_NEW_SESSION}.jsonl"
+write_transcript "$AC25E_TRANSCRIPT" "$AC25E_LAUNCH" "$AC25E_RESULT"
+
+mkdir -p "$(dirname "$AC25E_REAL_OUTPUT")"
+touch "$AC25E_REAL_OUTPUT"
+
+AC25E_INPUT=$(jq -c -n --arg tp "$AC25E_TRANSCRIPT" '{transcript_path:$tp}')
+run_stop_hook_with_input "$AC25E_REPO" "$AC25E_INPUT" "" "$TEST_DIR/bin/lsof-dead"
+rm -rf "/tmp/claude-${AC25E_UID}/${AC25E_SLUG}/${AC25E_OLD_SESSION}" \
+       "/tmp/claude-${AC25E_UID}/${AC25E_SLUG}/${AC25E_NEW_SESSION}.jsonl" 2>/dev/null || true
+assert_reached_codex "AC-25e: dead task pruned when real output path contains a JSON-escaped backslash"
 
 print_test_summary "Stop Hook Background-Task Allow Test Summary"
 exit $?

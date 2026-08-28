@@ -420,6 +420,41 @@ else
 fi
 
 # ========================================
+# Test 21: max passes through for codex
+# ========================================
+echo ""
+echo "--- Test 21: max passes through for codex ---"
+echo ""
+
+result=""
+exit_code=0
+result=$(map_effort "max" "codex" 2>/dev/null) || exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && [[ "$result" == "max" ]]; then
+    pass "map_effort: max passes through for codex"
+else
+    fail "map_effort: max passes through for codex" "exit 0 + max" "exit=$exit_code, output=$result"
+fi
+
+# ========================================
+# Test 22: max maps to high for claude
+# ========================================
+echo ""
+echo "--- Test 22: max maps to high for claude ---"
+echo ""
+
+exit_code=0
+stderr_out=""
+result=$(map_effort "max" "claude" 2> "$TEST_DIR/map-effort-max-stderr.txt") || exit_code=$?
+stderr_out="$(cat "$TEST_DIR/map-effort-max-stderr.txt")"
+
+if [[ $exit_code -eq 0 ]] && [[ "$result" == "high" ]] && echo "$stderr_out" | grep -qiE "mapping effort|max|high"; then
+    pass "map_effort: max maps to high for claude with info log"
+else
+    fail "map_effort: max maps to high for claude with info log" "exit 0 + high + info log" "exit=$exit_code, output=$result, stderr=$stderr_out"
+fi
+
+# ========================================
 # Summary
 # ========================================
 

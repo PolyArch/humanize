@@ -69,7 +69,7 @@ fi
 echo ""
 echo "PT-2: Command description validation"
 if [[ -f "$GEN_PLAN_CMD" ]]; then
-    DESC=$(sed -n '/^---$/,/^---$/{ /^description:/{ s/^description:[[:space:]]*//p; q; } }' "$GEN_PLAN_CMD")
+    DESC=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^description:/{sub(/^description:[[:space:]]*/,""); print; exit}' "$GEN_PLAN_CMD")
     if [[ -n "$DESC" ]]; then
         pass "gen-plan.md has description: ${DESC:0:50}..."
     else
@@ -121,6 +121,8 @@ fi
 echo ""
 echo "PT-5b: Claude/Codex deliberation workflow validation"
 PLAN_TEMPLATE="$PROJECT_ROOT/prompt-template/plan/gen-plan-template.md"
+REGULAR_REVIEW_TEMPLATE="$PROJECT_ROOT/prompt-template/codex/regular-review.md"
+FULL_ALIGNMENT_TEMPLATE="$PROJECT_ROOT/prompt-template/codex/full-alignment-review.md"
 
 if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "scripts/ask-codex.sh" "$GEN_PLAN_CMD"; then
     pass "gen-plan command allows ask-codex script"
@@ -132,6 +134,102 @@ if [[ -f "$GEN_PLAN_CMD" ]] && grep -q -- "--auto-start-rlcr-if-converged" "$GEN
     pass "gen-plan command exposes auto-start-if-converged option"
 else
     fail "gen-plan command exposes auto-start-if-converged option" "--auto-start-rlcr-if-converged" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q -- "--coach" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command exposes coach option"
+else
+    fail "gen-plan command exposes coach option" "--coach" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && ! grep -q -- "--learning-mode" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command does not expose deprecated learning-mode option"
+else
+    fail "gen-plan command does not expose deprecated learning-mode option" "no --learning-mode" "deprecated option still present"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "mandatory stage quizzes" "$GEN_PLAN_CMD" && grep -q "COACH_CHECK_STATUS=passed" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command defines mandatory coach-mode stage quizzes"
+else
+    fail "gen-plan command defines mandatory coach-mode stage quizzes" "mandatory stage quizzes and COACH_CHECK_STATUS=passed" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Decision separation" "$GEN_PLAN_CMD" && grep -q "Decision questions resolve product/design choices" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode separates plan decisions from quizzes"
+else
+    fail "gen-plan coach mode separates plan decisions from quizzes" "decision separation and decision questions" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "short-answer or free-form quiz question" "$GEN_PLAN_CMD" && grep -q "Do not use multiple-choice" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode requires non-multiple-choice stage quizzes"
+else
+    fail "gen-plan coach mode requires non-multiple-choice stage quizzes" "short-answer/free-form and no multiple-choice" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Do not use rapid Q&A" "$GEN_PLAN_CMD" && grep -q "Do not substitute multiple-choice" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode forbids rapid Q&A and choice-only quizzes"
+else
+    fail "gen-plan coach mode forbids rapid Q&A and choice-only quizzes" "no rapid Q&A and no choice-only quizzes" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Ask one quiz question at a time" "$GEN_PLAN_CMD" && grep -q "expected answer" "$GEN_PLAN_CMD" && grep -q "inspecting the repository" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode uses graded quiz questioning"
+else
+    fail "gen-plan coach mode uses graded quiz questioning" "one quiz question, expected answer, and repository inspection" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Memory" "$GEN_PLAN_CMD" && grep -q "Self-check" "$GEN_PLAN_CMD" && grep -q "Education" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode defines memory self-check education categories"
+else
+    fail "gen-plan coach mode defines memory self-check education categories" "Memory, Self-check, and Education categories" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Memory -> Self-check -> Education" "$GEN_PLAN_CMD" && grep -q "Skip categories that do not apply" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode orders categories without busywork"
+else
+    fail "gen-plan coach mode orders categories without busywork" "category order and skip rule" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Memory mismatch" "$GEN_PLAN_CMD" && grep -q "design intent drift" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode treats memory mismatches as design drift"
+else
+    fail "gen-plan coach mode treats memory mismatches as design drift" "Memory mismatch and design intent drift" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Self-check rejection" "$GEN_PLAN_CMD" && grep -q "AI candidate plan/design is wrong" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode treats self-check rejection as AI design correction"
+else
+    fail "gen-plan coach mode treats self-check rejection as AI design correction" "Self-check rejection and AI design correction" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Education gap" "$GEN_PLAN_CMD" && grep -q "do not auto-start implementation" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode treats education gaps as blocking background gaps"
+else
+    fail "gen-plan coach mode treats education gaps as blocking background gaps" "Education gap and no auto-start" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "first-class gen-plan quality signals" "$GEN_PLAN_CMD" && grep -q "Do not collapse these signals into a generic wrong answer" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode records category-specific quality signals"
+else
+    fail "gen-plan coach mode records category-specific quality signals" "quality signals and no generic wrong answer" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "COACH_CHECK_STATUS=blocked" "$GEN_PLAN_CMD" && grep -q "update the candidate plan state" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode handles unresolved confirmation and revision"
+else
+    fail "gen-plan coach mode handles unresolved confirmation and revision" "blocked status and revision handling" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "reference earlier ledger entries only when current plan content depends on them" "$GEN_PLAN_CMD" && grep -q "mainline logic" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode references relevant prior mainline logic"
+else
+    fail "gen-plan coach mode references relevant prior mainline logic" "relevant prior decisions and mainline logic" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "final stage quiz" "$GEN_PLAN_CMD" && grep -q "overall human acceptance" "$GEN_PLAN_CMD"; then
+    pass "gen-plan coach mode includes overall acceptance"
+else
+    fail "gen-plan coach mode includes overall acceptance" "final stage quiz and overall acceptance" "missing"
 fi
 
 if [[ -f "$GEN_PLAN_CMD" ]] && grep -n "GEN_PLAN_MODE=direct" "$GEN_PLAN_CMD" | grep -q "PLAN_CONVERGENCE_STATUS=partially_converged"; then
@@ -216,6 +314,24 @@ else
     fail "plan template includes convergence status subsection" "Convergence Status subsection" "missing"
 fi
 
+if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "## Feature Map / Capability Map" "$PLAN_TEMPLATE"; then
+    pass "plan template includes feature map / capability map section"
+else
+    fail "plan template includes feature map / capability map section" "Feature Map / Capability Map section" "missing"
+fi
+
+if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "Capability ID" "$PLAN_TEMPLATE" && grep -q "Context Summary" "$PLAN_TEMPLATE"; then
+    pass "plan template includes capability map context columns"
+else
+    fail "plan template includes capability map context columns" "Capability ID and Context Summary columns" "missing one or both"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Feature Map Requirement" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command defines mandatory feature map requirement"
+else
+    fail "gen-plan command defines mandatory feature map requirement" "Feature Map Requirement rule" "missing"
+fi
+
 if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "## Task Breakdown" "$GEN_PLAN_CMD"; then
     pass "gen-plan command requires task breakdown section"
 else
@@ -232,6 +348,130 @@ if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "Tag (\`coding\`/\`analyze\`)" "$PLAN_TE
     pass "plan template includes coding/analyze task tag column"
 else
     fail "plan template includes coding/analyze task tag column" "tag column in task table" "missing"
+fi
+
+if [[ -f "$PLAN_TEMPLATE" ]] && ! grep -q "Handoff AC Pattern" "$PLAN_TEMPLATE"; then
+    pass "plan template excludes handoff AC pattern from copied output"
+else
+    fail "plan template excludes handoff AC pattern from copied output" "no Handoff AC Pattern template/example section" "section still present"
+fi
+
+if [[ -r "$PLAN_TEMPLATE" ]]; then
+    if AC_SECTION=$(awk '/^## Acceptance Criteria[[:space:]]*$/{in_ac=1; next} /^## / && in_ac{in_ac=0} in_ac' "$PLAN_TEMPLATE"); then
+        if ! grep -q '[^[:space:]]' <<< "$AC_SECTION"; then
+            fail "plan template acceptance criteria section omits deferred/future markers" "non-empty Acceptance Criteria section" "section missing or empty"
+        elif ! grep -Eq "deferred|future|follow-up|subsequent|next phase|next iteration|next milestone|next loop|v2|v\\.next|Phase II|left for|to be implemented in|FUT-" <<< "$AC_SECTION"; then
+            pass "plan template acceptance criteria section omits deferred/future markers"
+        else
+            fail "plan template acceptance criteria section omits deferred/future markers" "no deferred/future markers under Acceptance Criteria" "markers present"
+        fi
+    else
+        fail "plan template acceptance criteria section omits deferred/future markers" "Acceptance Criteria section can be extracted" "awk extraction failed"
+    fi
+else
+    fail "plan template acceptance criteria section omits deferred/future markers" "readable plan template" "missing or unreadable: $PLAN_TEMPLATE"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "Handoff AC Pattern" "$GEN_PLAN_CMD" && grep -q "generation guidance only" "$GEN_PLAN_CMD"; then
+    pass "gen-plan command keeps handoff pattern as generation guidance"
+else
+    fail "gen-plan command keeps handoff pattern as generation guidance" "Handoff AC Pattern generation guidance" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] \
+   && grep -qF "Prompt MUST include the Handoff AC Pattern definition inline" "$GEN_PLAN_CMD" \
+   && grep -qF "current-loop AC may cover only the handoff" "$GEN_PLAN_CMD" \
+   && grep -qF "without completing the future work" "$GEN_PLAN_CMD"; then
+    pass "gen-plan second Codex prompt defines handoff AC pattern inline"
+else
+    fail "gen-plan second Codex prompt defines handoff AC pattern inline" "inline Handoff AC Pattern definition in Phase 5 prompt requirements" "missing"
+fi
+
+if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "## Future Work / Out of Scope" "$PLAN_TEMPLATE" && grep -q "FUT-1" "$PLAN_TEMPLATE"; then
+    pass "plan template includes FUT future-work section"
+else
+    fail "plan template includes FUT future-work section" "Future Work / Out of Scope with FUT-* example" "missing"
+fi
+
+if [[ -f "$PLAN_TEMPLATE" ]] && grep -q "current RLCR completion gates" "$PLAN_TEMPLATE"; then
+    pass "plan template defines ACs as current RLCR completion gates"
+else
+    fail "plan template defines ACs as current RLCR completion gates" "current RLCR completion gates contract" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] \
+   && grep -q "Deferred AC Semantic Guard" "$GEN_PLAN_CMD" \
+   && grep -q "next phase" "$GEN_PLAN_CMD" \
+   && grep -q "to be implemented in" "$GEN_PLAN_CMD" \
+   && grep -q "review hints, not automatic failures" "$GEN_PLAN_CMD"; then
+    pass "gen-plan generation rules include semantic deferred AC guard"
+else
+    fail "gen-plan generation rules include semantic deferred AC guard" "Deferred AC Semantic Guard with non-automatic marker handling" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "AC/Task Bidirectional Coverage" "$GEN_PLAN_CMD"; then
+    pass "gen-plan generation rules include AC/task bidirectional coverage"
+else
+    fail "gen-plan generation rules include AC/task bidirectional coverage" "AC/Task Bidirectional Coverage rule" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "DEC/FUT Linkage" "$GEN_PLAN_CMD"; then
+    pass "gen-plan generation rules include DEC/FUT linkage"
+else
+    fail "gen-plan generation rules include DEC/FUT linkage" "DEC/FUT Linkage rule" "missing"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] \
+   && grep -qF 'Resolution status (`resolved` or `needs_user_decision`)' "$GEN_PLAN_CMD" \
+   && grep -qF 'Do NOT use `deferred` as a convergence status' "$GEN_PLAN_CMD" \
+   && grep -qF 'resolved `DEC-*` plus linked `FUT-*`' "$GEN_PLAN_CMD" \
+   && grep -qF 'unlinked deferred-work resolution MUST force `PLAN_CONVERGENCE_STATUS=partially_converged`' "$GEN_PLAN_CMD" \
+   && grep -qF 'no deferred-work resolution exists only in the convergence matrix' "$GEN_PLAN_CMD" \
+   && ! grep -qF 'Resolution status (`resolved`, `needs_user_decision`, `deferred`)' "$GEN_PLAN_CMD"; then
+    pass "gen-plan convergence matrix prevents deferred status escape hatch"
+else
+    fail "gen-plan convergence matrix prevents deferred status escape hatch" "no deferred status and DEC/FUT linkage required before convergence/auto-start" "missing or stale convergence status rule"
+fi
+
+if [[ -f "$GEN_PLAN_CMD" ]] \
+   && grep -q "REQUIRED_CHANGES" "$GEN_PLAN_CMD" \
+   && grep -q "real work happen outside this RLCR loop" "$GEN_PLAN_CMD" \
+   && grep -q "review hints, not automatic blockers" "$GEN_PLAN_CMD" \
+   && grep -q "validating future dates as input" "$GEN_PLAN_CMD" \
+   && ! grep -q "hard keyword scan" "$GEN_PLAN_CMD" \
+   && ! grep -q "Treat these strings as blocking" "$GEN_PLAN_CMD"; then
+    pass "gen-plan codex review requires semantic deferred-AC detection"
+else
+    fail "gen-plan codex review requires semantic deferred-AC detection" "REQUIRED_CHANGES only for semantic deferrals, not keyword hits" "missing or keyword-blocking language present"
+fi
+
+if [[ -f "$REGULAR_REVIEW_TEMPLATE" ]] \
+   && grep -q "FUT-\\*" "$REGULAR_REVIEW_TEMPLATE" \
+   && grep -q "MUST NOT block the COMPLETE verdict" "$REGULAR_REVIEW_TEMPLATE"; then
+    pass "regular RLCR review template excludes FUT items from COMPLETE gate"
+else
+    fail "regular RLCR review template excludes FUT items from COMPLETE gate" "FUT-* items MUST NOT block COMPLETE" "missing"
+fi
+
+if [[ -f "$REGULAR_REVIEW_TEMPLATE" ]] \
+   && grep -q "defer any current-scope tasks" "$REGULAR_REVIEW_TEMPLATE" \
+   && grep -q 'Do NOT draft implementation plans solely for `FUT-\*`' "$REGULAR_REVIEW_TEMPLATE" \
+   && grep -q "unfinished current-scope work" "$REGULAR_REVIEW_TEMPLATE" \
+   && grep -q "pending current-scope work" "$REGULAR_REVIEW_TEMPLATE" \
+   && ! grep -q "defer any tasks" "$REGULAR_REVIEW_TEMPLATE" \
+   && ! grep -q "if any task is deferred" "$REGULAR_REVIEW_TEMPLATE" \
+   && ! grep -q "if any task is pending" "$REGULAR_REVIEW_TEMPLATE"; then
+    pass "regular RLCR review template scopes deferral escalation to current-scope tasks"
+else
+    fail "regular RLCR review template scopes deferral escalation to current-scope tasks" "current-scope-only deferral escalation" "unscoped task deferral language present"
+fi
+
+if [[ -f "$FULL_ALIGNMENT_TEMPLATE" ]] \
+   && grep -q "FUT-\\*" "$FULL_ALIGNMENT_TEMPLATE" \
+   && grep -q "MUST NOT block the COMPLETE verdict" "$FULL_ALIGNMENT_TEMPLATE"; then
+    pass "full-alignment RLCR review template excludes FUT items from COMPLETE gate"
+else
+    fail "full-alignment RLCR review template excludes FUT items from COMPLETE gate" "FUT-* items MUST NOT block COMPLETE" "missing"
 fi
 
 if [[ -f "$GEN_PLAN_CMD" ]] && grep -q "### Step 1.5: Consolidate Pending User Decisions" "$GEN_PLAN_CMD"; then
@@ -252,7 +492,7 @@ fi
 echo ""
 echo "PT-6: Agent name validation"
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    NAME=$(sed -n '/^---$/,/^---$/{ /^name:/{ s/^name:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    NAME=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^name:/{sub(/^name:[[:space:]]*/,""); print; exit}' "$RELEVANCE_AGENT")
     if [[ "$NAME" == "draft-relevance-checker" ]]; then
         pass "draft-relevance-checker agent has correct name field"
     else
@@ -266,7 +506,7 @@ fi
 echo ""
 echo "PT-7: Agent model specification validation"
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    MODEL=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    MODEL=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^model:/{sub(/^model:[[:space:]]*/,""); print; exit}' "$RELEVANCE_AGENT")
     if [[ "$MODEL" == "haiku" ]]; then
         pass "draft-relevance-checker agent uses haiku model"
     else
@@ -521,7 +761,7 @@ fi
 
 # Verify agent has valid model
 if [[ -f "$RELEVANCE_AGENT" ]]; then
-    MODEL=$(sed -n '/^---$/,/^---$/{ /^model:/{ s/^model:[[:space:]]*//p; q; } }' "$RELEVANCE_AGENT")
+    MODEL=$(awk 'BEGIN{f=0} /^---$/{f++; next} f==1 && /^model:/{sub(/^model:[[:space:]]*/,""); print; exit}' "$RELEVANCE_AGENT")
     if [[ -n "$MODEL" ]]; then
         if validate_model_name "$MODEL"; then
             pass "NT-6c: draft-relevance-checker has valid model: $MODEL"
@@ -667,6 +907,24 @@ if [[ -x "$VALIDATE_SCRIPT" ]]; then
         pass "validate-gen-plan-io: auto-start flag accepted"
     else
         fail "validate-gen-plan-io: auto-start flag should be accepted" "0" "$EXIT_CODE"
+    fi
+
+    # Test: Valid paths with coach flag should exit 0
+    EXIT_CODE=0
+    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/new-output-coach.md" --coach 2>/dev/null || EXIT_CODE=$?
+    if [[ $EXIT_CODE -eq 0 ]]; then
+        pass "validate-gen-plan-io: coach flag accepted"
+    else
+        fail "validate-gen-plan-io: coach flag should be accepted" "0" "$EXIT_CODE"
+    fi
+
+    # Test: deprecated learning-mode flag should be rejected
+    EXIT_CODE=0
+    "$VALIDATE_SCRIPT" --input "$SCRIPT_TEST_DIR/valid.md" --output "$SCRIPT_TEST_DIR/new-output-learning.md" --learning-mode >/dev/null 2>&1 || EXIT_CODE=$?
+    if [[ $EXIT_CODE -eq 6 ]]; then
+        pass "validate-gen-plan-io: deprecated learning-mode flag rejected"
+    else
+        fail "validate-gen-plan-io: deprecated learning-mode flag should be rejected" "6" "$EXIT_CODE"
     fi
 
     # Test: --discussion flag is recognized (not rejected as unknown)

@@ -1,6 +1,6 @@
 ---
 description: "Generate implementation plan from draft document"
-argument-hint: "--input <path/to/draft.md> --output <path/to/plan.md> [--auto-start-rlcr-if-converged] [--discussion|--direct]"
+argument-hint: "--input <path/to/draft.md> --output <path/to/plan.md> [--auto-start-rlcr-if-converged] [--discussion|--direct] [--coach]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/validate-gen-plan-io.sh:*)"
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh:*)"
@@ -33,7 +33,7 @@ This command transforms a user's draft document into a well-structured implement
 
 > **Sequential Execution Constraint**: All phases below MUST execute strictly in order. Do NOT parallelize tool calls across different phases. Each phase must fully complete before the next one begins.
 
-1. **Execution Mode Setup**: Parse optional behaviors from command arguments
+1. **Execution Mode Setup**: Parse optional behaviors from command arguments, including coach mode
 2. **Load Project Config**: Resolve merged Humanize config defaults for `alternative_plan_language` and `gen_plan_mode`
 3. **IO Validation**: Validate input and output paths
 4. **Relevance Check**: Verify draft is relevant to the repository
@@ -44,6 +44,8 @@ This command transforms a user's draft document into a well-structured implement
 9. **Final Plan Generation**: Generate the converged structured plan.md with task routing tags
 10. **Write and Complete**: Write output file, optionally write translated language variant, optionally auto-start implementation, and report results
 
+When `--coach` is enabled, run mandatory stage quizzes after each completed planning stage. Normal human decision questions still happen when the plan needs a user choice, but those decision questions do not count as coach quizzes. Coach quizzes are inserted during plan generation, not deferred to a final review, and test whether the human's understanding is aligned with the agent's current plan.
+
 ---
 
 ## Phase 0: Execution Mode Setup
@@ -53,9 +55,79 @@ Parse `$ARGUMENTS` and set:
 - `AUTO_START_RLCR_IF_CONVERGED=false` otherwise
 - `GEN_PLAN_MODE_DISCUSSION=true` if `--discussion` is present
 - `GEN_PLAN_MODE_DIRECT=true` if `--direct` is present
+- `COACH_MODE=true` if `--coach` is present
+- `COACH_MODE=false` otherwise
 - If both `--discussion` and `--direct` are present simultaneously, report error "Cannot use --discussion and --direct together" and stop
 
 `AUTO_START_RLCR_IF_CONVERGED=true` allows skipping manual plan review and starting implementation immediately (by invoking `/humanize:start-rlcr-loop <output-plan-path>`), but only when `GEN_PLAN_MODE=discussion`, plan convergence is achieved, and no pending user decisions remain. In `direct` mode this condition is never satisfied.
+
+Initialize coach-mode state:
+- `COACH_CHECK_STATUS=not_enabled` when `COACH_MODE=false`
+- `COACH_CHECK_STATUS=pending` when `COACH_MODE=true`
+- `COACH_CHECK_COUNT=0`
+- `COACH_CHECK_SUMMARY=""`
+- `COACH_MAINLINE_LEDGER=[]`
+
+### Coach Mode Protocol
+
+When `COACH_MODE=true`, insert a mandatory stage quiz after each completed planning stage and before expanding from one planning layer to the next. Each quiz gate MUST use AskUserQuestion and MUST include:
+
+1. **Stage explanation**: 3-5 concise bullets explaining what was completed, what plan state now exists, and why it matters.
+2. **Decision separation**: ask normal plan decision questions separately from coach quizzes. Decision questions resolve product/design choices and may use options; they do not satisfy the stage quiz requirement.
+3. **Stage quiz**: ask at least one short-answer or free-form quiz question that the human must answer in their own words. Do not use multiple-choice, yes/no, or "continue" confirmation as the quiz, unless the interface has no free-form input path; if forced to use choices, ask the human to type the reasoning before continuing.
+4. **Coach question ladder**: choose quiz questions only from these categories, in this order when more than one category applies:
+   - **Memory**: ask the user to restate or identify a design decision from their own draft or prior clarification. This checks whether the user remembers what they already designed; do not challenge correctness in this category.
+   - **Self-check**: ask the user to inspect the candidate plan/design and confirm whether it matches their intent, constraints, risks, and acceptance criteria. This checks whether the design direction is correct or needs revision.
+   - **Education**: explain background knowledge, repository context, or technical tradeoffs that may be obvious to the agent but not to the user, then ask whether the explanation is understood before relying on it.
+5. **Grading and remediation**: grade the answer against the stage's current plan state, explain any mismatch, and remediate according to the category-specific standards below.
+6. **Confirmation**: continue only after the quiz answer is aligned, or after remediation/revision resolves the mismatch.
+
+Do NOT continue to the next planning layer until the stage quiz has been answered and graded. If the user asks a follow-up question, answer it directly, inspect the repository when codebase facts matter, update the explanation if needed, and then ask a new stage quiz on the same mainline point. If the user challenges the direction, update the candidate plan state, rerun the relevant analysis, and repeat the quiz gate for the revised stage.
+
+If confirmation cannot be obtained, set `COACH_CHECK_STATUS=blocked`, write the unresolved decision or comprehension blocker into `## Pending User Decisions`, report the blocker, and stop instead of producing a deeper plan.
+
+### Coach Answer Interpretation Standards
+
+Incorrect, surprising, or non-confirming answers are first-class gen-plan quality signals. Interpret them by category:
+
+- **Memory mismatch**: treat this as possible design intent drift, not as a simple recall failure. Pause expansion, ask whether the original draft decision has changed or should remain authoritative, update the candidate plan source of truth or `## Pending User Decisions`, and rerun the affected analysis before proceeding.
+- **Self-check rejection**: treat this as evidence that the AI candidate plan/design is wrong, incomplete, or misaligned with the user's intent. Revise the candidate plan, record the correction, and rerun the relevant analysis or convergence step before asking for confirmation again.
+- **Education gap**: treat this as a prerequisite background/context gap. Provide a concise explanation tied to the repository or technical tradeoff, ask for explicit confirmation, and do not rely on that concept in deeper plan content until it is understood. If the gap remains unresolved, set `COACH_CHECK_STATUS=blocked`, record it as a blocker, and do not auto-start implementation.
+
+The plan is not coach-confirmed until each triggered category has been handled according to its standard. Do not collapse these signals into a generic wrong answer.
+
+### Coach Questioning Style
+
+- Ask one quiz question at a time.
+- Use the Memory -> Self-check -> Education order when a checkpoint needs multiple quiz questions. Skip categories that do not apply; never invent busywork to fill all three.
+- Walk the plan's decision tree in dependency order. Resolve prerequisite understanding before downstream implementation details.
+- Provide the expected answer and concise rationale only after the user answers or asks for help, so the exchange remains a real quiz rather than a disguised explanation.
+- If a question can be answered by inspecting the repository, inspect the repository instead of asking the user. Ask the human only about comprehension, judgment, priority, or unresolved tradeoffs.
+- Do not use rapid Q&A. Do not substitute multiple-choice, yes/no, or "continue" prompts for the mandatory stage quiz. Avoid trivia; every quiz must test alignment with the current plan's goal, risks, approach, scope, acceptance criteria, dependencies, or task sequence.
+
+### Coach Ledger
+
+Maintain `COACH_MAINLINE_LEDGER` as the plan develops. Each entry should capture a mainline topic, the checkpoint where it was introduced, its question category (`Memory`, `Self-check`, or `Education`), its outcome (`confirmed`, `design_intent_drift`, `ai_design_correction`, `background_gap`, or `blocked`), its dependencies, the user's decision or confirmation, and whether it is confirmed or blocked.
+
+During later checkpoints, reference earlier ledger entries only when current plan content depends on them, and connect those prior decisions to the current mainline logic. Do not add unrelated historical checks just to increase difficulty.
+
+### Overall Human Acceptance
+
+Checkpoint D MUST perform overall human acceptance for the full plan logic before Phase 7 writes the final plan:
+
+- Summarize the plan's mainline from goal to implementation sequence.
+- Summarize what the user has already confirmed and any topics that required explanation or revision.
+- Ask whether the user understands and accepts the overall plan direction, not merely whether the last checkpoint is complete.
+- If the user asks follow-up questions during this acceptance, answer them and repeat the acceptance confirmation before proceeding.
+
+Run these checkpoints:
+
+- **Checkpoint A - First-pass analysis**: After Phase 3 and before Phase 4, explain Codex Analysis v1, then quiz the user on the highest-risk assumption and whether any `QUESTIONS_FOR_USER` item blocks candidate planning.
+- **Checkpoint B - Candidate plan**: After Phase 4 and before Phase 5 (or before Phase 6 in direct mode), explain the proposed scope, path boundaries, dependencies, and risks, then quiz the user on the main implementation mechanism or affected components.
+- **Checkpoint C - Convergence rounds**: After each Phase 5 convergence round and before running another round or declaring convergence, explain material changes, resolved disagreements, and remaining disagreements, then quiz the user on the delta and whether any item should be reopened.
+- **Checkpoint D - Finalization gate**: After Phase 6 and before Phase 7, summarize the final plan direction, unresolved decisions, and acceptance-criteria shape. Perform a final stage quiz on the plan's mainline and ask for overall human acceptance before writing the plan.
+
+After each passed checkpoint, increment `COACH_CHECK_COUNT`, update `COACH_MAINLINE_LEDGER`, and append concise checkpoint notes to `COACH_CHECK_SUMMARY` for Phase 8 reporting. When all required checkpoints have passed, set `COACH_CHECK_STATUS=passed`. When `COACH_MODE=false`, skip this protocol completely.
 
 ---
 
@@ -211,6 +283,8 @@ If `ask-codex.sh` fails (missing Codex CLI, timeout, or runtime error), use AskU
 - Retry with updated Codex settings/environment
 - Continue with Claude-only planning (explicitly note reduced cross-review confidence in plan output)
 
+If `COACH_MODE=true`, run Checkpoint A before entering Phase 4.
+
 ---
 
 ## Phase 4: Claude Candidate Plan (v1)
@@ -250,6 +324,8 @@ Use the Task tool with `subagent_type: "Explore"` to investigate:
 - Existing patterns and conventions
 - Dependencies and integrations
 
+If `COACH_MODE=true`, run Checkpoint B before entering Phase 5. In direct mode, run Checkpoint B before entering Phase 6.
+
 ---
 
 ## Phase 5: Iterative Convergence Loop (Claude <-> Second Codex)
@@ -266,6 +342,11 @@ After Claude candidate plan v1 is ready, run iterative challenge/refine rounds w
      "${CLAUDE_PLUGIN_ROOT}/scripts/ask-codex.sh" "<review current candidate plan>"
      ```
    - Prompt MUST include current candidate plan, prior disagreements, and unresolved items
+   - Prompt MUST include the RLCR plan contract: `AC-*` items are current RLCR completion gates; deferred, future, out-of-scope, post-work, or successor-loop goals must be represented as `FUT-*` under `## Future Work / Out of Scope`, optionally with a current-loop handoff AC.
+   - Prompt MUST require Codex to inspect each AC for deferral semantics. If any AC claims the real work happens outside this RLCR loop, Codex MUST put it under `REQUIRED_CHANGES`, not `OPTIONAL_IMPROVEMENTS`.
+   - Prompt MUST include the Handoff AC Pattern definition inline: when preserving a future goal, a current-loop AC may cover only the handoff state/artifact/documentation. The handoff AC may reference `FUT-*`, but its positive and negative tests must be fully verifiable in this loop without completing the future work. The final plan must not leave a `Handoff AC Pattern` template/example section behind.
+   - Prompt MUST require semantic deferred-AC detection within each AC body. Use these strings as review hints, not automatic blockers: `TODO`, `TBD`, `deferred`, `future`, `follow-up`, `subsequent`, `next phase`, `next iteration`, `next milestone`, `next loop`, `v2`, `v.next`, `Phase II`, `left for`, `to be implemented in`, `see FUT-`. Codex MUST put the issue under `REQUIRED_CHANGES` only when the AC's meaning makes the real work happen outside this RLCR loop and the AC is not a valid Handoff AC. Do not block current-scope domain wording solely because it contains a marker term, such as an AC about validating future dates as input.
+   - Prompt MUST require AC/Task bidirectional coverage: every `AC-*` is targeted by at least one Task Breakdown row; every Task Breakdown row targets at least one current-scope `AC-*`; no task target may be empty, `-`, `FUT-*`, or `DEC-*`.
    - Require output format:
      - `AGREE:` points accepted as reasonable
      - `DISAGREE:` points considered unreasonable and why
@@ -280,8 +361,10 @@ After Claude candidate plan v1 is ready, run iterative challenge/refine rounds w
      - Topic
      - Claude position
      - Second Codex position
-     - Resolution status (`resolved`, `needs_user_decision`, `deferred`)
+     - Resolution status (`resolved` or `needs_user_decision`)
      - Round-to-round delta
+   - Do NOT use `deferred` as a convergence status. If the selected resolution defers work, it is `resolved` only after the candidate plan records a `DEC-*` decision with a non-`PENDING` `Decision Status`, links that decision to a `FUT-*` item under `## Future Work / Out of Scope`, and ensures the deferred work is not represented as a current-scope AC/task. If that DEC/FUT linkage is missing or the decision needs human input, mark the topic `needs_user_decision`.
+   - If `COACH_MODE=true`, run Checkpoint C before starting another convergence round or declaring convergence
 
 ### Loop Termination Rules
 
@@ -293,8 +376,9 @@ Repeat convergence rounds until one of the following is true:
 If max rounds are reached with unresolved opposite opinions, carry them to user decision phase explicitly.
 
 Set convergence state explicitly:
-- `PLAN_CONVERGENCE_STATUS=converged` when convergence conditions are met
+- `PLAN_CONVERGENCE_STATUS=converged` when convergence conditions are met, no `needs_user_decision` topic remains, and every resolution that defers work already has a resolved `DEC-*` plus linked `FUT-*` entry
 - `PLAN_CONVERGENCE_STATUS=partially_converged` otherwise
+- Any unlinked deferred-work resolution MUST force `PLAN_CONVERGENCE_STATUS=partially_converged` and `HUMAN_REVIEW_REQUIRED=true`
 
 ---
 
@@ -309,7 +393,7 @@ Decide if manual review can be skipped:
 - Else if `AUTO_START_RLCR_IF_CONVERGED=true` **and** `PLAN_CONVERGENCE_STATUS=converged`, set `HUMAN_REVIEW_REQUIRED=false`
 - Otherwise set `HUMAN_REVIEW_REQUIRED=true`
 
-If `HUMAN_REVIEW_REQUIRED=false`, skip Step 2-4 and continue directly to Phase 7.
+Do not skip Step 1.5. If `HUMAN_REVIEW_REQUIRED=false`, run Step 1.5 first, then skip Step 2-4. Then run Checkpoint D if `COACH_MODE=true`; otherwise continue directly to Phase 7.
 
 ### Step 1.5: Consolidate Pending User Decisions (runs unconditionally)
 
@@ -317,11 +401,13 @@ Before proceeding (regardless of `HUMAN_REVIEW_REQUIRED`), consolidate all user-
 
 1. Extract `QUESTIONS_FOR_USER` items from Codex Analysis v1 (Phase 3)
 2. Extract items with status `needs_user_decision` from the final convergence matrix (Phase 5) — use the last round's state, not intermediate rounds
-3. Deduplicate: if the same topic appears in both sources, merge into one entry
-4. For each collected item, check if it was substantively resolved during Phase 4-5 plan refinement (i.e., Claude addressed it and second Codex agreed in a subsequent round). Remove only items with clear evidence of resolution.
-5. Write all remaining unresolved items into the plan's `## Pending User Decisions` section. Use `DEC-N` identifiers. Set `Decision Status` to `PENDING`.
+3. Extract any convergence topic whose selected resolution defers work but lacks a resolved `DEC-*` plus linked `FUT-*` entry. Add it as a `PENDING` decision so it blocks auto-start instead of silently escaping the completion gate.
+4. Deduplicate: if the same topic appears in multiple sources, merge into one entry
+5. For each collected item, check if it was substantively resolved during Phase 4-5 plan refinement (i.e., Claude addressed it and second Codex agreed in a subsequent round). Remove only items with clear evidence of resolution and, for deferred-work resolutions, complete resolved `DEC-*`/`FUT-*` linkage.
+6. Write all remaining unresolved items into the plan's `## Pending User Decisions` section. Use `DEC-N` identifiers. Set `Decision Status` to `PENDING`.
    - For Claude-vs-Codex disagreements: fill `Claude Position`, `Codex Position`, and `Tradeoff Summary`
    - For open questions (no opposing positions): set `Claude Position` to Claude's tentative answer (if any), `Codex Position` to `N/A - open question`, and `Tradeoff Summary` to the question's context
+   - For deferred-work resolutions that are already decided, do not leave them as `PENDING`; instead record the resolved decision, reference its `FUT-*` entry, and ensure the `FUT-*` entry includes `Source DEC: DEC-N`
 
 This ensures:
 - When `HUMAN_REVIEW_REQUIRED=true`: items are visible for Steps 2-4 user resolution
@@ -367,6 +453,8 @@ For each unresolved disagreement, present:
 
 If the user does not decide immediately, keep the item in the plan as `PENDING` under a dedicated user-decision section.
 
+If `COACH_MODE=true`, run Checkpoint D after all required issue and disagreement handling is complete. Do not enter Phase 7 until `COACH_CHECK_STATUS=passed`.
+
 ---
 
 ## Phase 7: Final Plan Generation
@@ -384,6 +472,7 @@ Deeply think and generate the plan.md following these rules:
 ## Acceptance Criteria
 
 Following TDD philosophy, each criterion includes positive and negative tests for deterministic verification.
+The `AC-*` items are current RLCR completion gates for this implementation loop.
 
 - AC-1: <First criterion>
   - Positive Tests (expected to PASS):
@@ -444,16 +533,36 @@ Example: "The implementation includes core feature X with basic validation"
 
 <Describe relative dependencies between components, not time estimates>
 
+## Feature Map / Capability Map
+
+Use this section to map feature- or capability-level dependencies and context. It supplements `## Task Breakdown` by showing how related tasks carry business, design, and implementation context across the plan; it is not a replacement for executable tasks.
+
+| Capability ID | Capability / Feature | Target ACs | Depends On | Context Summary | Implementation Surface |
+|---------------|----------------------|------------|------------|-----------------|------------------------|
+| cap1 | <User-facing or internal capability> | AC-1, AC-2 | - | Business: <why this matters>; Design: <expected behavior/UX/API>; Implementation: <state, data, or integration context to preserve> | <files/modules/components likely involved> |
+| cap2 | <Dependent capability> | AC-3 | cap1 | Business: <dependency rationale>; Design: <constraints inherited from cap1>; Implementation: <interfaces or decisions reused from cap1> | <files/modules/components likely involved> |
+
 ## Task Breakdown
 
 Each task must include exactly one routing tag:
 - `coding`: implemented by Claude
 - `analyze`: executed via Codex (`/humanize:ask-codex`)
 
+Every `AC-*` must be covered by at least one task. Every task must target at least one `AC-*`. Do not target `FUT-*`, `DEC-*`, or `-` in the Target AC column.
+
 | Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
 |---------|-------------|-----------|----------------------------|------------|
 | task1 | <...> | AC-1 | coding | - |
 | task2 | <...> | AC-2 | analyze | task1 |
+
+## Future Work / Out of Scope
+
+Future, deferred, post-work, successor-loop, and out-of-scope items belong here, not under `## Acceptance Criteria`.
+
+- FUT-1: <Future item that is not required for this RLCR loop>
+  - Source DEC: DEC-1
+  - Current-loop handoff: AC-X
+  - Promotion trigger: <Condition or follow-up loop that should promote this to a current-scope AC>
 
 ## Claude-Codex Deliberation
 
@@ -510,23 +619,35 @@ When `alternative_plan_language` is empty, absent, set to `"English"`, or set to
 
 5. **AC Format**: All acceptance criteria must use AC-X or AC-X.Y format.
 
-6. **Clear Dependencies**: Show what depends on what, not when things happen.
+6. **Current-Scope AC Contract**: `AC-*` items are the current RLCR completion gate. Do NOT create deferred ACs. Any deferred, future, out-of-scope, post-work, successor-task, or successor-loop goal must be written as `FUT-*` under `## Future Work / Out of Scope`, optionally linked to a current-loop Handoff AC.
 
-7. **TDD-Style Tests**: Each acceptance criterion MUST include both positive tests (expected to pass) and negative tests (expected to fail). This follows Test-Driven Development philosophy and enables deterministic verification.
+7. **Deferred AC Semantic Guard**: Before finalizing, inspect each AC body for deferral semantics. Deferral marker terms such as `TODO`, `TBD`, `deferred`, `future`, `follow-up`, `subsequent`, `next phase`, `next iteration`, `next milestone`, `next loop`, `v2`, `v.next`, `Phase II`, `left for`, `to be implemented in`, and `see FUT-` are review hints, not automatic failures. If the AC's meaning makes the real work happen outside this loop, rewrite the item as a current-loop handoff AC plus a `FUT-*` item, or move it entirely to future work. If a marker term is ordinary current-scope domain language, such as validating future dates as input, keep the AC if its tests are fully current-loop verifiable.
 
-8. **Affirmative Path Boundaries**: Describe upper and lower bounds using affirmative language (what IS acceptable) rather than negative language (what is NOT acceptable).
+8. **Handoff AC Pattern**: When preserving a future goal, write a current-loop AC only for the handoff state/artifact/documentation. The handoff AC may reference `FUT-*`, but its positive and negative tests must be fully verifiable in this loop and must not require completing the future work. This pattern is generation guidance only; do not leave a `Handoff AC Pattern` template/example section in the final plan.
 
-9. **Respect Deterministic Designs**: If the draft specifies a fixed approach with no choices, reflect this in the plan by narrowing the path boundaries to match the user's specification.
+9. **AC/Task Bidirectional Coverage**: Every `AC-*` must be covered by at least one Task Breakdown row. Every Task Breakdown row must target at least one current-scope `AC-*`. No row may use an empty target, `-`, `FUT-*`, or `DEC-*` as its Target AC.
 
-10. **Code Style Constraint**: The generated plan MUST include a section or note instructing that implementation code and comments should NOT contain plan-specific progress terminology such as "AC-", "Milestone", "Step", "Phase", or similar workflow markers. These terms belong in the plan document, not in the resulting codebase.
+10. **DEC/FUT Linkage**: If a resolved decision defers work, the decision resolution must explicitly reference a `FUT-*` item. Each `FUT-*` item caused by a decision must include `Source DEC: DEC-N`. If there is a current-loop handoff, both the DEC and FUT entry should reference the handoff AC.
 
-11. **Draft Completeness Requirement**: The generated plan MUST incorporate ALL information from the input draft document without omission. The draft represents the most valuable human input and must be fully preserved. Any clarifications obtained through Phase 6 should be added incrementally to the draft's original content, never replacing or losing any original requirements. The final plan must be a superset of the draft information plus all clarified details.
+11. **Clear Dependencies**: Show what depends on what, not when things happen.
 
-12. **Debate Traceability**: The plan MUST include Codex-first findings, Claude/Codex agreements, resolved disagreements, and unresolved decisions. Unresolved opposite opinions MUST be recorded in `## Pending User Decisions` for explicit user decision.
+12. **TDD-Style Tests**: Each acceptance criterion MUST include both positive tests (expected to pass) and negative tests (expected to fail). This follows Test-Driven Development philosophy and enables deterministic verification.
 
-13. **Convergence Requirement**: The plan MUST record Claude/Codex agreements, resolved disagreements, and final convergence status in `## Claude-Codex Deliberation`. Stop only when convergence conditions are met or max rounds reached with explicit carry-over decisions.
+13. **Affirmative Path Boundaries**: Describe upper and lower bounds using affirmative language (what IS acceptable) rather than negative language (what is NOT acceptable).
 
-14. **Task Tag Requirement**: The plan MUST include `## Task Breakdown`, and every task MUST be tagged as either `coding` or `analyze` (no untagged tasks, no other tag values).
+14. **Respect Deterministic Designs**: If the draft specifies a fixed approach with no choices, reflect this in the plan by narrowing the path boundaries to match the user's specification.
+
+15. **Code Style Constraint**: The generated plan MUST include a section or note instructing that implementation code and comments should NOT contain plan-specific progress terminology such as "AC-", "Milestone", "Step", "Phase", or similar workflow markers. These terms belong in the plan document, not in the resulting codebase.
+
+16. **Draft Completeness Requirement**: The generated plan MUST incorporate ALL information from the input draft document without omission. The draft represents the most valuable human input and must be fully preserved. Any clarifications obtained through Phase 6 should be added incrementally to the draft's original content, never replacing or losing any original requirements. The final plan must be a superset of the draft information plus all clarified details.
+
+17. **Debate Traceability**: The plan MUST include Codex-first findings, Claude/Codex agreements, resolved disagreements, and unresolved decisions. Unresolved opposite opinions MUST be recorded in `## Pending User Decisions` for explicit user decision.
+
+18. **Convergence Requirement**: The plan MUST record Claude/Codex agreements, resolved disagreements, and final convergence status in `## Claude-Codex Deliberation`. Stop only when convergence conditions are met or max rounds reached with explicit carry-over decisions.
+
+19. **Feature Map Requirement**: The plan MUST include `## Feature Map / Capability Map` before `## Task Breakdown`. Use it to group tasks into feature/capability nodes, record capability dependencies, and preserve business/design/implementation context that later implementation rounds should carry forward. Capability IDs must be stable and dependency references must point to existing capability IDs or `-`.
+
+20. **Task Tag Requirement**: The plan MUST include `## Task Breakdown`, and every task MUST be tagged as either `coding` or `analyze` (no untagged tasks, no other tag values).
 
 ---
 
@@ -549,6 +670,11 @@ After updating, **read the complete plan file** and verify:
 - The structured plan aligns with the original draft content
 - Claude/Codex disagreement handling is explicit and correctly reflected
 - No contradictions exist between different parts of the document
+- No instructional `Handoff AC Pattern` template/example section remains in the final plan
+- No `AC-*` uses deferred, future, out-of-scope, post-work, or successor-loop semantics except as a valid Handoff AC whose current-loop verification is complete without performing future work
+- Every `AC-*` is covered by at least one Task Breakdown row, and every Task Breakdown row targets at least one current-scope `AC-*`
+- Every decision that defers work links to a `FUT-*` entry, and every such `FUT-*` entry links back with `Source DEC: DEC-N`
+- Items under `## Future Work / Out of Scope` use `FUT-*`, not `AC-*`, and are not listed as current-scope Task Breakdown work
 
 If inconsistencies are found, fix them using the Edit tool.
 
@@ -598,6 +724,8 @@ If all of the following are true:
 - `PLAN_CONVERGENCE_STATUS=converged`
 - `GEN_PLAN_MODE=discussion`
 - There are no pending decisions with status `PENDING`
+- Every convergence topic whose resolution defers work has a resolved `DEC-*` plus linked `FUT-*` entry; no deferred-work resolution exists only in the convergence matrix
+- `COACH_MODE=false` or `COACH_CHECK_STATUS=passed`
 
 Then start work immediately by running:
 
@@ -605,7 +733,7 @@ Then start work immediately by running:
 /humanize:start-rlcr-loop --skip-quiz <output-plan-path>
 ```
 
-The `--skip-quiz` flag is passed because the user has already demonstrated understanding of the plan through the gen-plan convergence discussion.
+The `--skip-quiz` flag is passed because the user has already demonstrated understanding of the plan through the gen-plan convergence discussion and, when requested, coach checkpoints.
 
 If the command invocation is not available in this context, fall back to the setup script:
 
@@ -626,6 +754,7 @@ Report to the user:
 - Summary of what was included
 - Number of acceptance criteria defined
 - Number of convergence rounds executed
+- Coach mode status, including checkpoint count, confirmed mainline decisions, and blocked items if applicable
 - Number of unresolved user decisions (if any)
 - Whether language was unified (if applicable)
 - Whether direct work start was attempted, and its result
@@ -637,6 +766,13 @@ Report to the user:
 If issues arise during plan generation that require user input:
 - Use AskUserQuestion to clarify
 - Document any user decisions in the plan's context
+
+If coach confirmation fails or remains ambiguous:
+- Stop before expanding the next planning layer
+- Explain which checkpoint is blocked
+- Summarize the explanation or revision that was attempted
+- Record the blocker in `## Pending User Decisions`
+- Tell the user they can rerun without `--coach` only if they intentionally want to skip plan-time coaching checks
 
 If auto-start mode is enabled but convergence conditions are not met:
 - Explain why direct start was skipped

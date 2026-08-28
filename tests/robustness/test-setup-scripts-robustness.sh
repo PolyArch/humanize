@@ -1048,6 +1048,65 @@ else
     fail "--skip-impl plan contract anchor" "round-0-contract.md exists" "not found"
 fi
 
+echo ""
+echo "Test 45e: --skip-impl without capability map uses N/A anchor"
+if [[ -n "$LOOP_DIR_45" ]] && [[ -f "$LOOP_DIR_45/goal-tracker.md" ]] && [[ -f "$LOOP_DIR_45/round-0-contract.md" ]]; then
+    if grep -q "| N/A |" "$LOOP_DIR_45/goal-tracker.md" && \
+       grep -q "Capability Anchor: N/A" "$LOOP_DIR_45/round-0-contract.md" && \
+       ! grep -q "plan-anchor" "$LOOP_DIR_45/goal-tracker.md" && \
+       ! grep -q "plan-anchor" "$LOOP_DIR_45/round-0-contract.md"; then
+        pass "--skip-impl without capability map uses N/A anchor"
+    else
+        fail "--skip-impl legacy plan capability anchor" "N/A without plan-anchor" "$(cat "$LOOP_DIR_45/goal-tracker.md" "$LOOP_DIR_45/round-0-contract.md")"
+    fi
+else
+    fail "--skip-impl legacy plan capability anchor" "goal-tracker.md and round-0-contract.md exist" "missing"
+fi
+
+echo ""
+echo "Test 45f: --skip-impl with capability map uses map placeholder instead of plan-anchor"
+mkdir -p "$TEST_DIR/repo45e"
+init_basic_git_repo "$TEST_DIR/repo45e"
+cat > "$TEST_DIR/repo45e/plan.md" << 'EOF'
+# Capability Map Plan
+
+## Goal
+Keep a mapped feature aligned during review.
+
+## Acceptance Criteria
+- AC-1: Mapped feature remains aligned
+
+## Feature Map / Capability Map
+| Capability ID | Capability / Feature | Target ACs | Depends On | Context Summary | Implementation Surface |
+|---------------|----------------------|------------|------------|-----------------|------------------------|
+| cap1 | Mapped review capability | AC-1 | - | Business: review stays scoped; Design: anchored to cap1; Implementation: tracker and contract carry the map anchor | setup scripts |
+
+## Task Breakdown
+| Task ID | Description | Target AC | Tag (`coding`/`analyze`) | Depends On |
+|---------|-------------|-----------|----------------------------|------------|
+| task1 | Review mapped setup | AC-1 | coding | - |
+EOF
+printf 'plan.md\nbin/\n' >> "$TEST_DIR/repo45e/.gitignore"
+git -C "$TEST_DIR/repo45e" add .gitignore && git -C "$TEST_DIR/repo45e" commit -q -m "Add gitignore"
+
+mkdir -p "$TEST_DIR/repo45e/bin"
+echo '#!/usr/bin/env bash
+exit 0' > "$TEST_DIR/repo45e/bin/codex"
+chmod +x "$TEST_DIR/repo45e/bin/codex"
+
+unset EXIT_CODE
+OUTPUT=$(PATH="$TEST_DIR/repo45e/bin:$PATH" run_rlcr_setup "$TEST_DIR/repo45e" plan.md --skip-impl 2>&1) || EXIT_CODE=$?
+EXIT_CODE=${EXIT_CODE:-0}
+LOOP_DIR_45E=$(find "$TEST_DIR/repo45e/.humanize/rlcr" -maxdepth 1 -type d -name "20*" 2>/dev/null | head -1)
+if [[ -n "$LOOP_DIR_45E" ]] && [[ -f "$LOOP_DIR_45E/goal-tracker.md" ]] && [[ -f "$LOOP_DIR_45E/round-0-contract.md" ]] && \
+   grep -q "capability-map-tbd" "$LOOP_DIR_45E/goal-tracker.md" && \
+   grep -q "capability-map-tbd" "$LOOP_DIR_45E/round-0-contract.md" && \
+   ! grep -q "| plan-anchor |" "$LOOP_DIR_45E/goal-tracker.md"; then
+    pass "--skip-impl with capability map uses map placeholder"
+else
+    fail "--skip-impl mapped plan capability anchor" "capability-map-tbd without plan-anchor task seed" "output=$OUTPUT"
+fi
+
 # ========================================
 # Dependency Check Tests
 # ========================================

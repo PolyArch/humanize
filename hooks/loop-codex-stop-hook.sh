@@ -176,9 +176,9 @@ if [[ ! "$CODEX_EXEC_MODEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
-if [[ ! "$CODEX_EXEC_EFFORT" =~ ^(xhigh|high|medium|low)$ ]]; then
+if [[ ! "$CODEX_EXEC_EFFORT" =~ ^(max|xhigh|high|medium|low)$ ]]; then
     echo "Error: Invalid codex effort in state file: $CODEX_EXEC_EFFORT" >&2
-    echo "  Must be one of: xhigh, high, medium, low" >&2
+    echo "  Must be one of: max, xhigh, high, medium, low" >&2
     end_loop "$LOOP_DIR" "$STATE_FILE" "$EXIT_UNEXPECTED"
     exit 0
 fi
@@ -654,7 +654,14 @@ Please commit all changes before allowing the loop to exit.
                 exit 0
             fi
         fi
-        # Analysis complete and tree clean, allow exit
+        # Analysis complete and tree clean. Now do the terminal rename so the
+        # active state file stays in place until this cleanliness gate passes.
+        _meth_exit_reason=$(cat "$LOOP_DIR/.methodology-exit-reason" 2>/dev/null | tr -d '[:space:]' || echo "")
+        if [[ -n "$_meth_exit_reason" ]]; then
+            mv "$LOOP_DIR/methodology-analysis-state.md" "$LOOP_DIR/${_meth_exit_reason}-state.md" 2>/dev/null || true
+            rm -f "$LOOP_DIR/.methodology-exit-reason"
+            echo "Methodology analysis complete. State preserved as: $LOOP_DIR/${_meth_exit_reason}-state.md" >&2
+        fi
         exit 0
     else
         # Analysis not yet complete, block
@@ -1167,17 +1174,32 @@ mkdir -p "$CACHE_DIR"
 # portable-timeout.sh already sourced above
 
 # Disable native hooks for nested Codex reviewer calls to prevent Stop-hook recursion.
-# Probe whether the installed Codex CLI supports --disable; cache the result per loop
-# so older builds do not fail with an unknown-argument error.
+# Codex has used different hook feature names across releases. Probe each name
+# before disabling it so older CLIs that validate feature names still work.
 CODEX_DISABLE_HOOKS_ARGS=()
-_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-supported"
+_CODEX_FEATURE_CACHE="$CACHE_DIR/.codex-disable-hooks-features"
 if [[ -f "$_CODEX_FEATURE_CACHE" ]]; then
-    [[ "$(cat "$_CODEX_FEATURE_CACHE")" == "yes" ]] && CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-elif codex --help 2>&1 | grep -q -- '--disable'; then
-    CODEX_DISABLE_HOOKS_ARGS=(--disable codex_hooks)
-    echo "yes" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    while IFS= read -r feature_name; do
+        case "$feature_name" in
+            hooks|plugin_hooks|codex_hooks)
+                CODEX_DISABLE_HOOKS_ARGS+=("--disable" "$feature_name")
+                ;;
+        esac
+    done < "$_CODEX_FEATURE_CACHE"
 else
-    echo "no" > "$_CODEX_FEATURE_CACHE" 2>/dev/null
+    CODEX_HELP_OUTPUT="$(codex --help </dev/null 2>&1 || true)"
+    if grep -q -- '--disable' <<< "$CODEX_HELP_OUTPUT"; then
+        _CODEX_DISABLE_HOOK_FEATURES=()
+        for feature_name in hooks plugin_hooks codex_hooks; do
+            if codex --disable "$feature_name" --help </dev/null >/dev/null 2>&1; then
+                CODEX_DISABLE_HOOKS_ARGS+=("--disable" "$feature_name")
+                _CODEX_DISABLE_HOOK_FEATURES+=("$feature_name")
+            fi
+        done
+        printf '%s\n' ${_CODEX_DISABLE_HOOK_FEATURES[@]+"${_CODEX_DISABLE_HOOK_FEATURES[@]}"} > "$_CODEX_FEATURE_CACHE" 2>/dev/null || true
+    else
+        : > "$_CODEX_FEATURE_CACHE" 2>/dev/null || true
+    fi
 fi
 
 # Build command arguments for summary review (codex exec)
@@ -1228,6 +1250,8 @@ run_codex_code_review() {
     local prompt_fallback="# Code Review Phase - Round ${round}
 
 This file documents the code review invocation for audit purposes.
+Compatibility note: Codex 0.130.0 rejects [PROMPT] input, including - stdin, when --base is used.
+Humanize must not pass prompt input when --base is used; this file is audit-only.
 Provider: codex
 
 ## Review Configuration
@@ -1256,14 +1280,14 @@ Provider: codex
         echo "# Review base ($review_base_type): $review_base"
         echo "# Timeout: $CODEX_TIMEOUT seconds"
         echo ""
-        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
+        echo "codex review ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} --base $review_base ${CODEX_REVIEW_ARGS[*]}"
     } > "$CODEX_REVIEW_CMD_FILE"
 
     echo "Code review command saved to: $CODEX_REVIEW_CMD_FILE" >&2
     echo "Running codex review with timeout ${CODEX_TIMEOUT}s in $PROJECT_ROOT (base: $review_base)..." >&2
 
     CODEX_REVIEW_EXIT_CODE=0
-    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
+    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review ${CODEX_DISABLE_HOOKS_ARGS[@]+"${CODEX_DISABLE_HOOKS_ARGS[@]}"} --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
         > "$CODEX_REVIEW_LOG_FILE" 2>&1 || CODEX_REVIEW_EXIT_CODE=$?
 
     echo "Code review exit code: $CODEX_REVIEW_EXIT_CODE" >&2
@@ -1415,6 +1439,14 @@ Follow the plan's per-task routing tags strictly:
 - `coding` task -> Claude executes directly
 - `analyze` task -> execute via `/humanize:ask-codex`, then integrate the result
 - Keep Goal Tracker Active Tasks columns `Tag` and `Owner` aligned with execution
+
+## Capability Anchor Reminder
+
+If the plan contains `## Feature Map / Capability Map`:
+- The round contract must name the relevant Capability ID(s) or capability/feature name(s)
+- Goal Tracker Active Tasks must keep their `Capability` column aligned with the round contract
+- Mainline work must preserve the selected capability's business, design, and implementation context
+- Do not let queued or future-scope capability work take over the current round
 ROUTING_EOF
 }
 
@@ -1542,11 +1574,12 @@ You are in the **Review Phase** of the RLCR loop. Codex has performed a code rev
 ## Instructions
 
 1. Re-anchor on the original plan and current goal tracker before changing code
-2. Refresh the round contract at {{ROUND_CONTRACT_FILE}}
+2. Refresh the round contract at {{ROUND_CONTRACT_FILE}}, including its Capability Anchor when the plan has a capability map
 3. Address only the issues that are truly blocking the current mainline objective or code-review acceptance
-4. Record non-blocking follow-up items as queued, not as the main goal
-5. Commit your changes after fixing the issues
-6. Write your summary to: {{SUMMARY_FILE}}"
+4. Keep fixes inside the current Capability Anchor unless review proves it was wrong
+5. Record non-blocking follow-up items as queued, not as the main goal
+6. Commit your changes after fixing the issues
+7. Write your summary to: {{SUMMARY_FILE}}"
 
     load_and_render_safe "$TEMPLATE_DIR" "claude/review-phase-prompt.md" "$fallback" \
         "REVIEW_CONTENT=$review_content" \
@@ -1682,7 +1715,7 @@ CODEX_PROMPT_CONTENT=$(cat "$REVIEW_PROMPT_FILE")
     echo "# Working directory: $PROJECT_ROOT"
     echo "# Timeout: $CODEX_TIMEOUT seconds"
     echo ""
-    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
+    echo "codex exec ${CODEX_DISABLE_HOOKS_ARGS[*]+"${CODEX_DISABLE_HOOKS_ARGS[*]}"} ${CODEX_EXEC_ARGS[*]} \"<prompt>\""
     echo ""
     echo "# Prompt content:"
     echo "$CODEX_PROMPT_CONTENT"
@@ -1692,7 +1725,7 @@ echo "Codex command saved to: $CODEX_CMD_FILE" >&2
 echo "Running summary review with timeout ${CODEX_TIMEOUT}s..." >&2
 
 CODEX_EXIT_CODE=0
-printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
+printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec ${CODEX_DISABLE_HOOKS_ARGS[@]+"${CODEX_DISABLE_HOOKS_ARGS[@]}"} "${CODEX_EXEC_ARGS[@]}" - \
     > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
 
 echo "Codex exit code: $CODEX_EXIT_CODE" >&2
@@ -2030,6 +2063,7 @@ Before executing tasks in this round:
 1. Read @{{BITLESSON_FILE}}
 2. Run \`bitlesson-selector\` for each task/sub-task
 3. Follow selected lesson IDs (or \`NONE\`)
+4. Preserve the Capability Anchor from @{{ROUND_CONTRACT_FILE}} when the plan has a capability map
 
 ## Codex Review
 {{REVIEW_CONTENT}}
@@ -2045,7 +2079,7 @@ Before writing code:
 - Re-read @{{PLAN_FILE}}
 - Re-read @{{GOAL_TRACKER_FILE}}
 - Re-read the recent round summaries and review results
-- Rewrite @{{ROUND_CONTRACT_FILE}} with a recovery-focused mainline objective
+- Rewrite @{{ROUND_CONTRACT_FILE}} with a recovery-focused mainline objective and Capability Anchor
 
 Do not spend this round clearing queued work. Recover mainline progress first.
 

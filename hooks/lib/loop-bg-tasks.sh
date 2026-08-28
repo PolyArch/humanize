@@ -117,6 +117,75 @@ derive_tasks_dir_from_transcript() {
     printf '/tmp/claude-%s/%s/%s/tasks' "$uid" "$slug" "$sid"
 }
 
+# Extract the real background-task output file path recorded in the
+# transcript launch message.
+#
+# Claude Code records background Bash launches in the tool_result message
+# text as:
+#   "Command running in background with ID: <task-id>. Output is being
+#    written to: <path>. You will be notified when it completes."
+# The trailing " You will be notified when it completes." sentence is
+# optional: some launch records omit it, and the parser must still recover
+# <path>.
+#
+# The <path> is authoritative: when a Claude session is resumed or
+# continued, the current transcript may have a different session id from
+# the session under which the task was launched, so the output file does
+# NOT live under derive_tasks_dir_from_transcript(current transcript).
+# Falling back to the derived directory causes dead/orphaned tasks to be
+# treated as alive forever.
+#
+# Usage: extract_bg_task_output_path_from_transcript "$transcript_path" "$task_id"
+#   Prints the absolute output file path, or nothing when the transcript
+#   is unreadable or the launch message does not contain a path.
+extract_bg_task_output_path_from_transcript() {
+    local transcript_path="$1" task_id="$2"
+    [[ -z "$transcript_path" ]] && return
+    [[ -f "$transcript_path" ]] || return
+    [[ -z "$task_id" ]] && return
+
+    # jq is required to decode the launch record's text field; without it the
+    # recorded output path cannot be safely unescaped, so fall back to the
+    # derived tasks_dir path (the pre-transcript-extraction behavior).
+    command -v jq >/dev/null 2>&1 || return
+
+    # Select the launch record whose backgroundTaskId is EXACTLY task_id.
+    # The id always appears as a JSON string value in the
+    # toolUseResult.backgroundTaskId field, so wrapping it in literal double
+    # quotes anchors the match at the JSON-value boundary and stops "bash_1"
+    # from matching an earlier "bash_10" launch line (head -n1 below takes the
+    # earliest match, which is the launch record).
+    local match_line
+    match_line=$(grep -F "\"$task_id\"" "$transcript_path" 2>/dev/null | head -n1) || true
+    [[ -z "$match_line" ]] && return
+
+    # Decode the selected record's text field. The output path is embedded
+    # inside a JSON string value, so the raw JSONL text carries JSON escapes
+    # (a literal backslash in the path is doubled to "\\"); reading it raw
+    # would return the escaped spelling, [[ -f ]] would then miss the real
+    # file, and the dead task would be treated as alive forever. jq -r yields
+    # the unescaped string, so the extracted path matches the filesystem.
+    #
+    # The path is the text after the "Output is being written to" prefix;
+    # decoding first means the path can contain spaces, quotes or any other
+    # character a raw [^"]* or [^[:space:]]+ pattern would mishandle. The
+    # optional trailing ". You will be notified when it completes." sentence
+    # is emitted by most Claude Code versions but omitted by some; requiring
+    # it caused the real output path to be missed on session resume, so the
+    # suffix is stripped only when present.
+    local decoded
+    decoded=$(printf '%s' "$match_line" | jq -r '
+        .message.content[]?.content[]? | select(.type == "text") | .text
+    ' 2>/dev/null) || true
+    [[ -n "$decoded" && "$decoded" == *"Output is being written to: "* ]] || return
+
+    local path
+    path="${decoded#*Output is being written to: }"
+    # Strip the optional notification suffix; a no-op when absent.
+    path="${path%. You will be notified when it completes.}"
+    expand_leading_tilde "$path"
+}
+
 # Returns 0 if the background task identified by task_id appears to be alive
 # (output file absent, or lsof reports >= 1 holder), 1 if confirmed dead
 # (output file exists and lsof reports 0 holders).
@@ -127,11 +196,42 @@ derive_tasks_dir_from_transcript() {
 #
 # Set LSOF_BIN to override the lsof binary path (used in tests).
 #
-# Usage: is_bg_task_alive "$task_id" "$tasks_dir"
+# Usage: is_bg_task_alive "$task_id" "$tasks_dir" [transcript_path]
 is_bg_task_alive() {
-    local task_id="$1" tasks_dir="$2"
+    local task_id="$1" tasks_dir="$2" transcript_path="${3:-}"
     local lsof_bin="${LSOF_BIN:-lsof}"
-    local output_file="$tasks_dir/$task_id.output"
+    local output_file
+
+    # Prefer the real output path recorded in the transcript launch
+    # message; fall back to the derived tasks_dir. This matters when a
+    # Claude session has been resumed/continued and the current
+    # transcript's session id differs from the launch session id.
+    if [[ -n "$transcript_path" ]]; then
+        output_file=$(extract_bg_task_output_path_from_transcript "$transcript_path" "$task_id")
+    fi
+    [[ -n "$output_file" ]] || output_file="$tasks_dir/$task_id.output"
+
+    # Session-resume fallback: when the transcript has no extractable
+    # launch path AND the session-derived path does not exist, the real
+    # .output file likely lives under a DIFFERENT session id (the one that
+    # launched the task). Search sibling session dirs under the same
+    # project slug before giving up. This only EXPANDS where we look, so a
+    # genuinely alive task is never wrongly pruned (its file exists and
+    # lsof still sees the open fd); a file missing everywhere remains
+    # genuinely unknown and fails open below as before.
+    if [[ ! -e "$output_file" ]] && [[ -n "$tasks_dir" ]]; then
+        local slug_dir _candidate
+        slug_dir=$(dirname "$(dirname "$tasks_dir")")   # /tmp/claude-<uid>/<slug>
+        if [[ -d "$slug_dir" ]]; then
+            for _candidate in "$slug_dir"/*/tasks/"$task_id".output; do
+                if [[ -f "$_candidate" ]]; then
+                    output_file="$_candidate"
+                    break
+                fi
+            done
+        fi
+    fi
+
     # Output file absent -> fail open (treat as still running).
     [[ -f "$output_file" ]] || return 0
     # lsof unavailable -> fail open.
@@ -143,13 +243,13 @@ is_bg_task_alive() {
 # Filter a newline-delimited list of task IDs, retaining only those that
 # pass is_bg_task_alive. Prints surviving IDs one per line.
 #
-# Usage: prune_dead_bg_task_ids "$pending_ids" "$tasks_dir"
+# Usage: prune_dead_bg_task_ids "$pending_ids" "$tasks_dir" [transcript_path]
 prune_dead_bg_task_ids() {
-    local pending_ids="$1" tasks_dir="$2"
+    local pending_ids="$1" tasks_dir="$2" transcript_path="${3:-}"
     local task_id
     while IFS= read -r task_id; do
         [[ -z "$task_id" ]] && continue
-        is_bg_task_alive "$task_id" "$tasks_dir" && printf '%s\n' "$task_id"
+        is_bg_task_alive "$task_id" "$tasks_dir" "$transcript_path" && printf '%s\n' "$task_id"
     done <<< "$pending_ids"
 }
 
@@ -162,7 +262,7 @@ prune_dead_bg_task_ids() {
 #   - Background shell: toolUseResult.backgroundTaskId non-empty
 #     -> id is toolUseResult.backgroundTaskId
 #
-# Completion events are recognised from two Claude Code transcript forms:
+# Completion events are recognised from three Claude Code transcript forms:
 #
 #   1. Structured SDK record
 #      (see SDKTaskNotificationMessage in docs/typescript.md):
@@ -173,6 +273,15 @@ prune_dead_bg_task_ids() {
 #   2. Legacy queue-operation enqueue whose `content` embeds a
 #      `<task-notification>` XML block with `<task-id>...</task-id>`;
 #      kept for transcripts produced by older Claude Code versions.
+#
+#   3. TaskStop tool_result: when the model or user stops a background
+#      task via the TaskStop tool, Claude Code records a top-level
+#      `.toolUseResult` whose `.message` is "Successfully stopped task:
+#      <id>" and (usually) whose `.task_id` is the stopped id. The id is
+#      read from `.task_id` when present and otherwise parsed out of the
+#      message text as a fallback. Many builds do NOT also emit a
+#      `task_notification` system event for a TaskStop, so this source is
+#      required or stopped tasks stay pending forever.
 #
 # pending := launched \ completed
 #
@@ -221,7 +330,7 @@ list_pending_background_task_ids() {
         | (.toolUseResult.agentId // .toolUseResult.backgroundTaskId)
     ' "$transcript_path" 2>/dev/null | sort -u) || return 1
 
-    # Union of both completion formats. Either source alone is enough to
+    # Union of all completion formats. Any one source alone is enough to
     # mark a launched id terminal.
     #
     # The `grep -oE || true` guard on the legacy branch keeps `set -o
@@ -242,6 +351,28 @@ list_pending_background_task_ids() {
             ' "$transcript_path" 2>/dev/null \
                 | { grep -oE '<task-id>[^<]+</task-id>' || true; } \
                 | sed -E 's|</?task-id>||g'
+            # TaskStop tool_result (source 3 above): the model/user stopped
+            # a background task. Match the top-level .toolUseResult whose
+            # .message is "Successfully stopped task: <id>" and emit its id.
+            # Required because many builds do not also emit a task_notification
+            # system event for a TaskStop. The id is read from .task_id when
+            # present; otherwise it is parsed out of the message text as a
+            # fallback, because some builds record the id only there. The
+            # message is coerced with `tostring` before `contains()` because
+            # unrelated toolUseResult records may carry a structured (object,
+            # array, number) `.message`, and `contains()` errors on non-strings;
+            # without the coercion one bad record would wipe the whole `completed`
+            # set under pipefail. The `try ... catch empty` keeps a degenerate
+            # message (prefix with no id, so the regex cannot match) from raising.
+            jq -r '
+                select(.toolUseResult != null)
+                | ((.toolUseResult.message // "") | tostring) as $msg
+                | select($msg | contains("Successfully stopped task:"))
+                | (.toolUseResult.task_id
+                   // try ($msg
+                         | capture("Successfully stopped task: (?<i>[^ (]+)")
+                         | .i) catch empty)
+            ' "$transcript_path" 2>/dev/null
         } | sort -u | sed '/^$/d'
     ) || completed=""
 
@@ -257,7 +388,7 @@ list_pending_background_task_ids() {
         local tasks_dir
         tasks_dir=$(derive_tasks_dir_from_transcript "$transcript_path")
         if [[ -n "$tasks_dir" ]]; then
-            pending=$(prune_dead_bg_task_ids "$pending" "$tasks_dir")
+            pending=$(prune_dead_bg_task_ids "$pending" "$tasks_dir" "$transcript_path")
         fi
     fi
 
@@ -355,7 +486,7 @@ handle_bg_task_short_circuit() {
         local guard_state_file guard_stored_sid
         guard_state_file=$(resolve_active_state_file "$loop_dir")
         if [[ -n "$guard_state_file" ]]; then
-            guard_stored_sid=$(sed -n '/^---$/,/^---$/{ /^'"${FIELD_SESSION_ID}"':/{ s/^'"${FIELD_SESSION_ID}"': *//; p; } }' "$guard_state_file" 2>/dev/null | tr -d ' ')
+            guard_stored_sid=$(awk -v key="${FIELD_SESSION_ID}" 'BEGIN{f=0} /^---$/{f++; next} f==1 && $0 ~ "^"key":"{sub("^"key":[[:space:]]*",""); print; exit}' "$guard_state_file" 2>/dev/null | tr -d ' ') || true
             if [[ -n "$guard_stored_sid" ]] \
                && [[ -n "$hook_session_id" ]] \
                && [[ "$guard_stored_sid" != "$hook_session_id" ]]; then
