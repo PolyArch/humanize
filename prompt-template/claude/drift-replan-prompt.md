@@ -32,6 +32,12 @@ Your recovery contract must contain:
 
 Do not start implementation until the recovery contract exists.
 
+**Important**: Rewriting the recovery contract is only the re-anchor
+precondition for drift recovery; it is not implementation progress. Do not
+attempt to exit after contract-only work. Before exiting, complete at least one
+non-queued `[mainline]` or truly `[blocking]` task that proves recovered
+mainline movement and replace the summary scaffold with concrete evidence.
+
 ## Task Lane Rules
 
 Use the Task system (TaskCreate, TaskUpdate, TaskList) with one required tag per task:

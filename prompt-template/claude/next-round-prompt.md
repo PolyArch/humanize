@@ -26,6 +26,12 @@ Your round contract must contain:
 
 Do not start implementation until the round contract exists.
 
+**Important**: Writing or updating the round contract is only the re-anchor
+precondition for this round; it is not implementation progress. Do not attempt
+to exit after contract-only work. Before exiting, complete at least one
+non-queued `[mainline]` or truly `[blocking]` task and replace the summary
+scaffold with concrete evidence.
+
 ## Task Lane Rules
 
 Use the Task system (TaskCreate, TaskUpdate, TaskList) with one required tag per task:

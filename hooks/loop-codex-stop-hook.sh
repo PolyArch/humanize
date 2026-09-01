@@ -25,6 +25,13 @@ DEFAULT_CODEX_TIMEOUT=5400
 # Read Hook Input
 # ========================================
 
+# Codex reviews launched by this hook can themselves trigger Stop hooks in Codex.
+# Treat those nested hook invocations as internal review plumbing; otherwise the
+# reviewer recursively launches another reviewer and the RLCR loop never advances.
+if [[ "${HUMANIZE_INSIDE_CODEX_REVIEW:-}" == "1" ]]; then
+    exit 0
+fi
+
 HOOK_INPUT=$(cat)
 
 # NOTE: We intentionally do NOT check stop_hook_active here.
@@ -854,6 +861,51 @@ The round contract must restate:
     fi
 fi
 
+# Check Summary File Is Not Still the Scaffold
+# ============================================
+# Round summary files are pre-created as editing targets. A file existing is
+# therefore not proof that Claude actually summarized completed work. After the
+# anti-drift contract precondition is satisfied, block the common contract-only
+# failure mode before spending a Codex review when the summary still contains
+# template placeholders.
+if [[ "$IS_FINALIZE_PHASE" != "true" ]]; then
+    SUMMARY_PLACEHOLDERS=$(awk '
+        BEGIN { in_fence = 0 }
+        /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence; next }
+        in_fence { next }
+        /^[[:space:]]*(-[[:space:]]*)?\[(Describe what was (done|implemented in this phase)|List (files created\/modified\/deleted|created\/modified files|tests\/commands run and outcomes|any deferred or pending items|unresolved items, if any))\][[:space:]]*$/ { print FNR ":" $0; next }
+        /^[[:space:]]*(-[[:space:]]*)?Action:[[:space:]]*none\|add\|update[[:space:]]*$/ { print FNR ":" $0; next }
+        /^[[:space:]]*(-[[:space:]]*)?Notes:[[:space:]]*\[what changed and why\][[:space:]]*$/ { print FNR ":" $0; next }
+    ' "$SUMMARY_FILE" 2>/dev/null || true)
+    if [[ -n "$SUMMARY_PLACEHOLDERS" ]]; then
+        FALLBACK="# Work Summary Still Placeholder
+
+The summary file exists but still contains scaffold placeholder text:
+
+{{PLACEHOLDER_LINES}}
+
+Writing the round contract is only step 0; it is not implementation progress.
+Before exiting, complete at least one non-queued mainline/blocking task and
+replace the summary with concrete work, changed files, validation, and remaining
+items.
+
+Summary file: {{SUMMARY_FILE}}"
+        REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/work-summary-placeholder.md" "$FALLBACK" \
+            "SUMMARY_FILE=$SUMMARY_FILE" \
+            "PLACEHOLDER_LINES=$SUMMARY_PLACEHOLDERS")
+
+        jq -n \
+            --arg reason "$REASON" \
+            --arg msg "Loop: Summary file still contains placeholders for round $CURRENT_ROUND" \
+            '{
+                "decision": "block",
+                "reason": $reason,
+                "systemMessage": $msg
+            }'
+        exit 0
+    fi
+fi
+
 # ========================================
 # Check BitLesson Delta Section (all non-finalize rounds)
 # ========================================
@@ -1263,7 +1315,7 @@ Provider: codex
     echo "Running codex review with timeout ${CODEX_TIMEOUT}s in $PROJECT_ROOT (base: $review_base)..." >&2
 
     CODEX_REVIEW_EXIT_CODE=0
-    (cd "$PROJECT_ROOT" && run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
+    (cd "$PROJECT_ROOT" && HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex review "${CODEX_DISABLE_HOOKS_ARGS[@]}" --base "$review_base" "${CODEX_REVIEW_ARGS[@]}") \
         > "$CODEX_REVIEW_LOG_FILE" 2>&1 || CODEX_REVIEW_EXIT_CODE=$?
 
     echo "Code review exit code: $CODEX_REVIEW_EXIT_CODE" >&2
@@ -1692,8 +1744,8 @@ echo "Codex command saved to: $CODEX_CMD_FILE" >&2
 echo "Running summary review with timeout ${CODEX_TIMEOUT}s..." >&2
 
 CODEX_EXIT_CODE=0
-printf '%s' "$CODEX_PROMPT_CONTENT" | run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
-    > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
+HUMANIZE_INSIDE_CODEX_REVIEW=1 run_with_timeout "$CODEX_TIMEOUT" codex exec "${CODEX_DISABLE_HOOKS_ARGS[@]}" "${CODEX_EXEC_ARGS[@]}" - \
+    < "$REVIEW_PROMPT_FILE" > "$CODEX_STDOUT_FILE" 2> "$CODEX_STDERR_FILE" || CODEX_EXIT_CODE=$?
 
 echo "Codex exit code: $CODEX_EXIT_CODE" >&2
 echo "Codex stdout saved to: $CODEX_STDOUT_FILE" >&2
