@@ -80,7 +80,7 @@ The quiz is advisory, not a gate. You always have the option to proceed. But tha
 ### gen-idea
 
 ```
-/humanize:gen-idea <idea-text-or-path> [--n <int>] [--output <path>]
+/humanize:gen-idea <idea-text-or-path> [--n <int>] [--output <path>] [--alt-language <language-or-code>]
 ```
 
 Generates a repo-grounded idea draft using directed-diversity exploration. A lead agent picks N orthogonal directions, N parallel Explore subagents develop each direction with objective evidence from the repo, and the lead synthesizes a draft with one primary direction plus N-1 alternatives.
@@ -88,15 +88,17 @@ Generates a repo-grounded idea draft using directed-diversity exploration. A lea
 **Outputs:**
 - Draft file: `.humanize/ideas/<slug>-<timestamp>.md` (or `--output` path)
 - Companion JSON: `<draft-path-without-.md>.directions.json` — lossless record of all direction proposals, used as input to `explore-idea`
+- Optional translated draft variant: `_<code>` inserted before the draft file extension, written only when `--alt-language` or config enables a supported non-English language
 
 **Options:**
 - `--n <int>` — number of parallel directions (default: 6)
 - `--output <path>` — custom output path for the draft (must have `.md` suffix)
+- `--alt-language <language-or-code>` — generate a translated draft Markdown variant; supported values are zh, ko, ja, es, fr, de, pt, ru, ar or full language names; en/English is a no-op
 
 ### explore-idea
 
 ```
-/humanize:explore-idea <draft.md | draft.directions.json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N]
+/humanize:explore-idea <draft.md | draft.directions.json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N] [--alt-language <language-or-code>]
 ```
 
 Launches bounded parallel prototype workers — one per selected direction — each running in an isolated git worktree. After all workers complete, synthesizes an explore report plus a plan-ready final idea:
@@ -109,6 +111,7 @@ Launches bounded parallel prototype workers — one per selected direction — e
 - `--max-worker-iterations <N>` — per-worker iteration cap (default: 2, max: 3)
 - `--worker-timeout-min <N>` — worker timeout in minutes (default: 60, max: 60)
 - `--codex-timeout-min <N>` — Codex call timeout in minutes (default: 20, max: 20)
+- `--alt-language <language-or-code>` — generate a translated `final-idea.md` Markdown variant; supported values are zh, ko, ja, es, fr, de, pt, ru, ar or full language names; en/English is a no-op
 
 **Run artifacts** stored in `.humanize/explore/<RUN_ID>/`:
 - `manifest.json` — coordinator state and per-worker metadata
@@ -116,6 +119,7 @@ Launches bounded parallel prototype workers — one per selected direction — e
 - `worker-results.jsonl` — machine-readable result rows
 - `explore-report.md` — audit report with two-tier rankings, adoption paths, and cleanup guidance
 - `final-idea.md` — plan-ready synthesis artifact for `/humanize:gen-plan`
+- `final-idea_<code>.md` — optional translated plan-ready synthesis variant when alternative language output is enabled
 
 Default follow-up:
 ```bash
@@ -333,7 +337,7 @@ Current built-in keys:
 | `bitlesson_model` | `haiku` | Model used by the BitLesson selector agent |
 | `provider_mode` | unset | Optional runtime mode hint such as `codex-only` |
 | `agent_teams` | `false` | Project-level default for agent teams workflow |
-| `alternative_plan_language` | `""` | Optional translated plan variant language; supported values include `Chinese`, `Korean`, `Japanese`, `Spanish`, `French`, `German`, `Portuguese`, `Russian`, `Arabic`, or ISO codes like `zh` |
+| `alternative_plan_language` | `""` | Optional translated variant language for generated plan-ready Markdown artifacts, including gen-plan plans, refine-plan plan/QA outputs, gen-idea drafts, and explore-idea final ideas; supported values include `Chinese`, `Korean`, `Japanese`, `Spanish`, `French`, `German`, `Portuguese`, `Russian`, `Arabic`, or ISO codes like `zh` |
 | `gen_plan_mode` | `discussion` | Default plan-generation mode |
 
 ### Codex Model Configuration

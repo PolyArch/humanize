@@ -75,7 +75,79 @@ else
     fail "gen-idea.md lists validate-directions-json.sh in allowed-tools" "found in allowed-tools" "not found"
 fi
 
-# PT-5: validate-directions-json.sh validates the valid fixture
+# PT-5: gen-idea.md exposes alternative language option
+if grep -q -- "--alt-language <language-or-code>" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md exposes --alt-language option"
+else
+    fail "gen-idea.md exposes --alt-language option" "--alt-language <language-or-code>" "not found"
+fi
+
+# PT-6: gen-idea.md reads alternative_plan_language from merged config
+if grep -q "alternative_plan_language" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md reads alternative_plan_language"
+else
+    fail "gen-idea.md reads alternative_plan_language" "alternative_plan_language" "not found"
+fi
+
+# PT-7: gen-idea.md reuses config-loader merge semantics
+if grep -q "config-loader.sh" "$GEN_IDEA_CMD" && grep -q "load_merged_config" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md uses config-loader merge semantics"
+else
+    fail "gen-idea.md uses config-loader merge semantics" "config-loader.sh + load_merged_config" "missing"
+fi
+
+# PT-8: gen-idea.md defines normalized alt language variables
+if grep -q "ALT_PLAN_LANGUAGE" "$GEN_IDEA_CMD" && grep -q "ALT_PLAN_LANG_CODE" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md defines ALT_PLAN_LANGUAGE and ALT_PLAN_LANG_CODE"
+else
+    fail "gen-idea.md defines alternative language variables" "ALT_PLAN_LANGUAGE + ALT_PLAN_LANG_CODE" "missing"
+fi
+
+# PT-9: gen-idea.md documents draft variant naming
+if grep -q "idea.md -> idea_zh.md" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md documents idea.md -> idea_zh.md"
+else
+    fail "gen-idea.md documents draft variant naming" "idea.md -> idea_zh.md" "missing"
+fi
+
+# PT-10: gen-idea.md keeps directions JSON canonical
+if grep -q 'DIRECTIONS_JSON_FILE` is not translated' "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md states DIRECTIONS_JSON_FILE is not translated"
+else
+    fail "gen-idea.md states directions JSON is not translated" "DIRECTIONS_JSON_FILE is not translated" "missing"
+fi
+
+# PT-11: gen-idea.md strips --alt-language before validator invocation
+if grep -q 'Keep `--alt-language` out of the validator invocation' "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md strips --alt-language before validator invocation"
+else
+    fail "gen-idea.md strips --alt-language before validator invocation" "Keep --alt-language out of validator invocation" "missing"
+fi
+
+# PT-12: gen-idea.md keeps warning path on config-loading flow
+if grep -q 'Surface these warnings.*continue Phase 1\.5' "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md warning path continues to Phase 1.5"
+else
+    fail "gen-idea.md warning path continues to Phase 1.5" "continue Phase 1.5" "missing"
+fi
+
+# PT-13: gen-idea.md preflights translated draft variant collision before writes
+if grep -q "DRAFT_VARIANT_FILE" "$GEN_IDEA_CMD" \
+        && grep -q "Translated draft variant already exists" "$GEN_IDEA_CMD" \
+        && grep -q "before any canonical outputs are written" "$GEN_IDEA_CMD"; then
+    pass "gen-idea.md preflights translated draft variant collision"
+else
+    fail "gen-idea.md preflights translated draft variant collision" "DRAFT_VARIANT_FILE collision check before canonical writes" "missing"
+fi
+
+# PT-14: gen-idea.md does not document impossible extensionless variant output
+if grep -q "output -> output_zh" "$GEN_IDEA_CMD"; then
+    fail "gen-idea.md omits extensionless variant example" "no output -> output_zh example" "found"
+else
+    pass "gen-idea.md omits extensionless variant example"
+fi
+
+# PT-15: validate-directions-json.sh validates the valid fixture
 if command -v jq &>/dev/null; then
     VALID_FIXTURE="$SCRIPT_DIR/fixtures/directions/valid.directions.json"
     EXIT_CODE=0

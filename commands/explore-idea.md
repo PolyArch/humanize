@@ -1,6 +1,6 @@
 ---
 description: "Launch bounded parallel prototype workers for idea directions and synthesize canonical explore artifacts"
-argument-hint: "<draft-or-directions-json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N]"
+argument-hint: "<draft-or-directions-json> [--directions ids] [--concurrency N] [--max-worker-iterations N] [--worker-timeout-min N] [--codex-timeout-min N] [--alt-language <language-or-code>]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/validate-explore-idea-io.sh:*)"
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/validate-directions-json.sh:*)"
@@ -25,7 +25,8 @@ Read and execute below with ultrathink.
 - MUST NOT run workers until the user explicitly confirms the dispatch.
 - MUST NOT push any branch to any remote at any point.
 - MUST write `manifest.json` to the run directory BEFORE dispatching any worker.
-- MUST write canonical artifacts to `explore-report.md` and `final-idea.md`; do not create any legacy compatibility alias.
+- MUST write canonical artifacts to `explore-report.md` and `final-idea.md`; may additionally write only the optional translated `final-idea` variant; do not create any legacy compatibility alias.
+- MUST NOT translate or create variants for `explore-report.md`, `manifest.json`, `worker-results.jsonl`, or `dispatch-prompts/`.
 - MUST NOT invoke nested Skills or slash commands inside worker prompts.
 - MUST NOT use `--effort max` (not supported by `ask-codex.sh`).
 - Worker branches follow the format `explore/<RUN_ID>/<dir_slug>` exactly, and MUST be created by running `git checkout -b` from the current HEAD after asserting `HEAD == <BASE_COMMIT>`; workers MUST NOT run `git checkout <BASE_BRANCH>` (that branch is already checked out in the coordinator worktree, and Git forbids two worktrees from checking out the same branch simultaneously); a HEAD mismatch is a fatal worker error.
@@ -41,6 +42,7 @@ The per-direction worker constraints are defined in `WORKER_PROMPT_TEMPLATE` (fr
 ## Workflow
 
 1. IO Validation
+1.5. Load Project Config
 2. Confirmation
 3. Run State Initialization
 4. Worker Dispatch (parallel)
@@ -51,9 +53,13 @@ The per-direction worker constraints are defined in `WORKER_PROMPT_TEMPLATE` (fr
 
 ## Phase 1: IO Validation
 
+Before running validation, parse `$ARGUMENTS` and set `CLI_ALT_LANGUAGE_RAW` from `--alt-language`, or empty string when omitted. If `--alt-language` is present without a value, report `Invalid arguments: --alt-language requires a value` and stop.
+
+Build `VALIDATOR_ARGUMENTS` from `$ARGUMENTS` by removing `--alt-language` and its value. Keep `--alt-language` out of the validator invocation because `validate-explore-idea-io.sh` does not accept it.
+
 Run:
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/validate-explore-idea-io.sh" $ARGUMENTS
+"${CLAUDE_PLUGIN_ROOT}/scripts/validate-explore-idea-io.sh" $VALIDATOR_ARGUMENTS
 ```
 
 Handle exit codes:
@@ -63,7 +69,7 @@ Handle exit codes:
   `REPORT_PATH`, `FINAL_IDEA_PATH`, `FINAL_IDEA_TEMPLATE`,
   `SELECTED_DIRECTION_IDS`, `EFFECTIVE_CONCURRENCY`, `MAX_WORKER_ITERATIONS`,
   `WORKER_TIMEOUT_MIN`, `CODEX_TIMEOUT_MIN`, `WORKER_PROMPT_TEMPLATE`, `REPORT_TEMPLATE`.
-  Continue to Phase 2.
+  Continue to Phase 1.5.
   Parse values by splitting each line on the first literal `": "` only. Values can contain additional colons, for example `CODEX_REVIEW_MODEL_SPEC: gpt-5.5:xhigh`.
 - `1`: Report "No input path provided" and stop.
 - `2`: Report "Input file not found" and stop.
@@ -78,6 +84,67 @@ Handle exit codes:
 Load the directions JSON:
 - Read `DIRECTIONS_JSON_FILE` to get the full directions data for later use.
 - `SELECTED_DIRECTION_IDS` is a space-separated list of `direction_id` values that were selected.
+
+---
+
+## Phase 1.5: Load Project Config
+
+Resolve configuration by following the same precedence and merge semantics defined in `${CLAUDE_PLUGIN_ROOT}/scripts/lib/config-loader.sh`. Reuse that behavior; do not invent a separate explore-idea config model.
+
+### Config Merge Semantics
+
+Use the same layer order as `load_merged_config`:
+
+1. Required default config: `${CLAUDE_PLUGIN_ROOT}/config/default_config.json`
+2. Optional user config: `${XDG_CONFIG_HOME:-$HOME/.config}/humanize/config.json`
+3. Optional project config: `${HUMANIZE_CONFIG:-$PROJECT_ROOT/.humanize/config.json}`
+
+Later layers override earlier layers. Malformed optional JSON objects are treated as warnings and ignored. A malformed required default config is a fatal configuration error.
+
+### Values to Extract
+
+Read the merged config and resolve:
+
+- `CONFIG_ALT_LANGUAGE_RAW` from `alternative_plan_language`
+
+### Alternative Language Resolution
+
+Resolve the variant language with this priority:
+
+1. CLI `--alt-language`
+2. Config `alternative_plan_language`
+3. No variant
+
+Normalize the value case-insensitively using this mapping table:
+
+| Language   | Code | Suffix |
+|------------|------|--------|
+| Chinese    | zh   | `_zh`  |
+| Korean     | ko   | `_ko`  |
+| Japanese   | ja   | `_ja`  |
+| Spanish    | es   | `_es`  |
+| French     | fr   | `_fr`  |
+| German     | de   | `_de`  |
+| Portuguese | pt   | `_pt`  |
+| Russian    | ru   | `_ru`  |
+| Arabic     | ar   | `_ar`  |
+
+Normalization rules:
+
+1. Trim leading and trailing whitespace before matching.
+2. Accept either the full language name or the ISO code from the table.
+3. Treat `English` / `en` as a no-op: no translated variant is generated.
+4. If the CLI value is unsupported, report `Unsupported --alt-language "<value>"` and stop.
+5. If the config value is unsupported, log a warning and disable variant generation.
+
+Set:
+
+- `ALT_PLAN_LANGUAGE` to the normalized language name or empty string
+- `ALT_PLAN_LANG_CODE` to the normalized code or empty string
+
+Do not depend on deprecated `chinese_plan`. `explore-idea` only uses `alternative_plan_language`.
+
+If `ALT_PLAN_LANGUAGE` is non-empty, compute `FINAL_IDEA_VARIANT_PATH` by inserting `_<ALT_PLAN_LANG_CODE>` before the extension of `FINAL_IDEA_PATH`, or appending it when there is no extension. If `ALT_PLAN_LANGUAGE` is empty, set `FINAL_IDEA_VARIANT_PATH` to empty.
 
 ---
 
@@ -97,6 +164,7 @@ Base branch:     <BASE_BRANCH>
 Base commit:     <BASE_COMMIT>
 Explore report:  <REPORT_PATH>
 Final idea:      <FINAL_IDEA_PATH>
+Final idea variant: <FINAL_IDEA_VARIANT_PATH or "(disabled)">
 
 Selected directions (<N> of <total>):
   [1] <direction_id>: <name>
@@ -267,8 +335,15 @@ After collecting all results, update the `workers` array in `manifest.json` to s
 Generate the canonical run artifacts:
 - `<REPORT_PATH>` (`explore-report.md`) by reading `REPORT_TEMPLATE` and synthesizing results.
 - `<FINAL_IDEA_PATH>` (`final-idea.md`) by reading `FINAL_IDEA_TEMPLATE` and producing a plan-ready synthesis for `/humanize:gen-plan`.
+- `<FINAL_IDEA_VARIANT_PATH>` (`final-idea_<code>.md`) only when `ALT_PLAN_LANGUAGE` is enabled; write it after `<FINAL_IDEA_PATH>` is complete.
 
 Do not create any legacy compatibility alias for the report.
+
+Artifacts that must not be translated:
+- `explore-report.md` is not translated.
+- `manifest.json` is not translated.
+- `worker-results.jsonl` is not translated.
+- `dispatch-prompts/` is not translated.
 
 ### 6.1: Load Results
 
@@ -373,6 +448,31 @@ If all workers failed (`.failed` exists), still write `<REPORT_PATH>` with:
 - No ranking sections
 
 Also write `<FINAL_IDEA_PATH>` with a clear "no adoption recommended" final recommendation and the evidence needed before retrying or planning.
+
+### 6.7: Translated Final Idea Variant (Conditional)
+
+After writing `<FINAL_IDEA_PATH>` for either the success path or all-workers-failed path, if `ALT_PLAN_LANGUAGE` is non-empty, write `<FINAL_IDEA_VARIANT_PATH>`.
+
+Filename construction rule for variants:
+
+1. If the filename has an extension, insert `_<ALT_PLAN_LANG_CODE>` before the last `.`.
+2. If the filename has no extension, append `_<ALT_PLAN_LANG_CODE>`.
+3. The variant file is placed in the same directory as `FINAL_IDEA_PATH`.
+
+Examples:
+
+- `final-idea.md -> final-idea_zh.md`
+- `.humanize/explore/<RUN_ID>/final-idea.md -> .humanize/explore/<RUN_ID>/final-idea_zh.md`
+
+Variant content rules:
+
+1. Translate human-readable final idea prose into `ALT_PLAN_LANGUAGE`; for Chinese, default to Simplified Chinese.
+2. Preserve paths, branch names, commit SHAs, direction IDs, API names, command flags, and shell commands.
+3. Keep the productization command pointing at canonical `FINAL_IDEA_PATH`: `/humanize:gen-plan --input <FINAL_IDEA_PATH> --output <plan-path>`.
+4. Do not add information that is absent from the canonical final idea.
+5. Apply the same rules to success final ideas and all-workers-failed final idea outputs.
+
+Do not create translated variants for `explore-report.md`, `manifest.json`, `worker-results.jsonl`, or `dispatch-prompts/`.
 
 ---
 

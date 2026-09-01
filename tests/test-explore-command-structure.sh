@@ -156,6 +156,59 @@ else
 fi
 
 echo ""
+echo "--- Alternative Language Variant ---"
+echo ""
+
+if grep -q -- "--alt-language <language-or-code>" "$EXPLORE_CMD"; then
+    pass "explore-idea.md exposes --alt-language option"
+else
+    fail "explore-idea.md exposes --alt-language option" "--alt-language <language-or-code>" "not found"
+fi
+
+if grep -q "alternative_plan_language" "$EXPLORE_CMD"; then
+    pass "explore-idea.md reads alternative_plan_language"
+else
+    fail "explore-idea.md reads alternative_plan_language" "alternative_plan_language" "not found"
+fi
+
+if grep -q "config-loader.sh" "$EXPLORE_CMD" && grep -q "load_merged_config" "$EXPLORE_CMD"; then
+    pass "explore-idea.md uses config-loader merge semantics"
+else
+    fail "explore-idea.md uses config-loader merge semantics" "config-loader.sh + load_merged_config" "missing"
+fi
+
+if grep -q "ALT_PLAN_LANGUAGE" "$EXPLORE_CMD" && grep -q "ALT_PLAN_LANG_CODE" "$EXPLORE_CMD"; then
+    pass "explore-idea.md defines ALT_PLAN_LANGUAGE and ALT_PLAN_LANG_CODE"
+else
+    fail "explore-idea.md defines alternative language variables" "ALT_PLAN_LANGUAGE + ALT_PLAN_LANG_CODE" "missing"
+fi
+
+if grep -q "final-idea.md -> final-idea_zh.md" "$EXPLORE_CMD"; then
+    pass "explore-idea.md documents final-idea.md -> final-idea_zh.md"
+else
+    fail "explore-idea.md documents final idea variant naming" "final-idea.md -> final-idea_zh.md" "missing"
+fi
+
+if grep -q 'explore-report.md` is not translated' "$EXPLORE_CMD" \
+        && grep -q 'worker-results.jsonl` is not translated' "$EXPLORE_CMD"; then
+    pass "explore-idea.md keeps report and worker results canonical"
+else
+    fail "explore-idea.md keeps report and worker results canonical" "explore-report.md and worker-results.jsonl are not translated" "missing"
+fi
+
+if grep -q "Final idea variant:" "$EXPLORE_CMD"; then
+    pass "explore-idea.md includes final idea variant confirmation line"
+else
+    fail "explore-idea.md includes final idea variant confirmation line" "Final idea variant:" "missing"
+fi
+
+if grep -q 'Keep `--alt-language` out of the validator invocation' "$EXPLORE_CMD"; then
+    pass "explore-idea.md strips --alt-language before validator invocation"
+else
+    fail "explore-idea.md strips --alt-language before validator invocation" "Keep --alt-language out of validator invocation" "missing"
+fi
+
+echo ""
 echo "--- Worker Dispatch Pattern ---"
 echo ""
 

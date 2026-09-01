@@ -1,6 +1,6 @@
 ---
 description: "Generate a repo-grounded idea draft via directed-swarm exploration"
-argument-hint: "<idea-text-or-path> [--n <int>] [--output <path>]"
+argument-hint: "<idea-text-or-path> [--n <int>] [--output <path>] [--alt-language <language-or-code>]"
 allowed-tools:
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/validate-gen-idea-io.sh:*)"
   - "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/validate-directions-json.sh:*)"
@@ -18,7 +18,7 @@ Read and execute below with ultrathink.
 
 ## Hard Constraint: Draft-Only Output
 
-This command MUST NOT implement features, modify source code, or create commits while producing the draft. Permitted writes are limited to the output draft file and its companion `directions.json` artifact produced in Phase 4; prerequisite directory creation for the default `.humanize/ideas/` path by the validation script is permitted. `rm` is permitted solely to delete those two just-written files when companion JSON validation fails (no-partial-output cleanup). All exploration subagents run read-only.
+This command MUST NOT implement features, modify source code, or create commits while producing the draft. Permitted writes are limited to the output draft file, its companion `directions.json` artifact produced in Phase 4, and the optional translated draft variant; prerequisite directory creation for the default `.humanize/ideas/` path by the validation script is permitted. `rm` is permitted solely to delete the two just-written canonical files when companion JSON validation fails (no-partial-output cleanup). All exploration subagents run read-only.
 
 This command transforms a loose idea into a repo-grounded draft suitable as input to `/humanize:gen-plan`. It applies directed-diversity exploration: a lead picks N orthogonal directions, N parallel `Explore` subagents develop each, the lead synthesizes a draft with one primary direction plus N-1 alternatives. Each direction carries objective evidence from the repo.
 
@@ -28,9 +28,10 @@ This command transforms a loose idea into a repo-grounded draft suitable as inpu
 
 1. Parse Input
 2. IO Validation
-3. Direction Generation
-4. Parallel Exploration
-5. Synthesis, Write Draft, and Write Companion JSON
+3. Load Project Config
+4. Direction Generation
+5. Parallel Exploration
+6. Synthesis, Write Draft, and Write Companion JSON
 
 ---
 
@@ -40,8 +41,11 @@ Extract from `$ARGUMENTS`:
 - First positional: inline idea text or path to a `.md` file (required).
 - `--n <int>`: number of directions. Default 6.
 - `--output <path>`: target draft path. Default resolved by the validation script.
+- `--alt-language <language-or-code>`: optional translated draft variant language.
 
-Do not interpret or rewrite the idea text here. Pass `$ARGUMENTS` through to Phase 1 unchanged.
+Set `CLI_ALT_LANGUAGE_RAW` from `--alt-language`, or empty string when omitted. If `--alt-language` is present without a value, report `Invalid arguments: --alt-language requires a value` and stop.
+
+Build `VALIDATOR_ARGUMENTS` from `$ARGUMENTS` by removing `--alt-language` and its value. Keep `--alt-language` out of the validator invocation because `validate-gen-idea-io.sh` does not accept it. Do not otherwise interpret or rewrite the idea text before Phase 1.
 
 ---
 
@@ -49,11 +53,11 @@ Do not interpret or rewrite the idea text here. Pass `$ARGUMENTS` through to Pha
 
 Run:
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/validate-gen-idea-io.sh" $ARGUMENTS
+"${CLAUDE_PLUGIN_ROOT}/scripts/validate-gen-idea-io.sh" $VALIDATOR_ARGUMENTS
 ```
 
 Handle exit codes:
-- `0`: Parse stdout to extract `INPUT_MODE`, `OUTPUT_FILE`, `DIRECTIONS_JSON_FILE`, `SLUG`, `TEMPLATE_FILE`, `N` (each appears on its own `KEY: value` line). When `INPUT_MODE` is `file`, stdout additionally contains an `IDEA_BODY_FILE: <path>` line; extract that too. Continue to Phase 2. (`SLUG` is informational — the script has already incorporated it into `OUTPUT_FILE`, so later phases do not need to use `SLUG` directly.)
+- `0`: Parse stdout to extract `INPUT_MODE`, `OUTPUT_FILE`, `DIRECTIONS_JSON_FILE`, `SLUG`, `TEMPLATE_FILE`, `N` (each appears on its own `KEY: value` line). When `INPUT_MODE` is `file`, stdout additionally contains an `IDEA_BODY_FILE: <path>` line; extract that too. Continue to Phase 1.5. (`SLUG` is informational — the script has already incorporated it into `OUTPUT_FILE`, so later phases do not need to use `SLUG` directly.)
 - `1`: Report "Missing or empty idea input" and stop.
 - `2`: Report "Input looks like a file path but is missing, not readable, or not `.md`" and stop.
 - `3`: Report "Output directory does not exist — please create it or choose a different path" and stop.
@@ -63,13 +67,80 @@ Handle exit codes:
 - `7`: Report "Template file missing — plugin configuration error" and stop.
 - `8`: Report "Companion directions.json already exists — choose a different output path or remove the existing companion file" and stop.
 
-Before `VALIDATION_SUCCESS`, stdout may contain one or more lines starting with `WARNING:` (for example, `WARNING: short idea (<N> chars); proceeding` when an inline idea is under 10 characters). Surface these warnings to the user in your final report but continue Phase 2 normally. `WARNING:` lines are informational, not errors.
+Before `VALIDATION_SUCCESS`, stdout may contain one or more lines starting with `WARNING:` (for example, `WARNING: short idea (<N> chars); proceeding` when an inline idea is under 10 characters). Surface these warnings to the user in your final report but continue Phase 1.5 normally. `WARNING:` lines are informational, not errors.
 
 Obtain the idea body into memory as `IDEA_BODY`, based on `INPUT_MODE`:
 - `inline`: stdout contains a sentinel block at the end of the success output; extract all text between the `=== IDEA_BODY_BEGIN ===` and `=== IDEA_BODY_END ===` lines (exclusive). The script emits a trailing newline after the last body line.
 - `file`: read the full contents of `IDEA_BODY_FILE` using the `Read` tool.
 
 Preserve byte-identical content in memory for later phases. No on-disk tempfile is created in inline mode — the stdout sentinel block is the authoritative source.
+
+---
+
+## Phase 1.5: Load Project Config
+
+Resolve configuration by following the same precedence and merge semantics defined in `${CLAUDE_PLUGIN_ROOT}/scripts/lib/config-loader.sh`. Reuse that behavior; do not invent a separate gen-idea config model.
+
+### Config Merge Semantics
+
+Use the same layer order as `load_merged_config`:
+
+1. Required default config: `${CLAUDE_PLUGIN_ROOT}/config/default_config.json`
+2. Optional user config: `${XDG_CONFIG_HOME:-$HOME/.config}/humanize/config.json`
+3. Optional project config: `${HUMANIZE_CONFIG:-$PROJECT_ROOT/.humanize/config.json}`
+
+Later layers override earlier layers. Malformed optional JSON objects are treated as warnings and ignored. A malformed required default config is a fatal configuration error.
+
+### Values to Extract
+
+Read the merged config and resolve:
+
+- `CONFIG_ALT_LANGUAGE_RAW` from `alternative_plan_language`
+
+### Alternative Language Resolution
+
+Resolve the variant language with this priority:
+
+1. CLI `--alt-language`
+2. Config `alternative_plan_language`
+3. No variant
+
+Normalize the value case-insensitively using this mapping table:
+
+| Language   | Code | Suffix |
+|------------|------|--------|
+| Chinese    | zh   | `_zh`  |
+| Korean     | ko   | `_ko`  |
+| Japanese   | ja   | `_ja`  |
+| Spanish    | es   | `_es`  |
+| French     | fr   | `_fr`  |
+| German     | de   | `_de`  |
+| Portuguese | pt   | `_pt`  |
+| Russian    | ru   | `_ru`  |
+| Arabic     | ar   | `_ar`  |
+
+Normalization rules:
+
+1. Trim leading and trailing whitespace before matching.
+2. Accept either the full language name or the ISO code from the table.
+3. Treat `English` / `en` as a no-op: no translated variant is generated.
+4. If the CLI value is unsupported, report `Unsupported --alt-language "<value>"` and stop.
+5. If the config value is unsupported, log a warning and disable variant generation.
+
+Set:
+
+- `ALT_PLAN_LANGUAGE` to the normalized language name or empty string
+- `ALT_PLAN_LANG_CODE` to the normalized code or empty string
+
+Do not depend on deprecated `chinese_plan`. `gen-idea` only uses `alternative_plan_language`.
+
+`ALT_PLAN_LANGUAGE` and `ALT_PLAN_LANG_CODE` control whether a translated draft variant is written after the companion JSON validates successfully.
+
+If `ALT_PLAN_LANGUAGE` is non-empty, compute `DRAFT_VARIANT_FILE` from `OUTPUT_FILE` by inserting `_<ALT_PLAN_LANG_CODE>` before the `.md` suffix. `validate-gen-idea-io.sh` guarantees `OUTPUT_FILE` has a `.md` suffix, so there is no extensionless variant case for `gen-idea`.
+
+Before Phase 2, check whether `DRAFT_VARIANT_FILE` already exists. If it exists, stop before any canonical outputs are written with: `Translated draft variant already exists — choose a different output path or remove the existing variant file`.
+
+If `ALT_PLAN_LANGUAGE` is empty, set `DRAFT_VARIANT_FILE` to empty and skip the variant collision check.
 
 ---
 
@@ -246,13 +317,39 @@ After writing `DIRECTIONS_JSON_FILE`, validate it:
 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-directions-json.sh" "$DIRECTIONS_JSON_FILE"
 ```
 
-If validation fails, delete both `OUTPUT_FILE` and `DIRECTIONS_JSON_FILE` and stop with error: `companion JSON validation failed — this is a bug in the command; please report it`.
+If validation fails, delete both `OUTPUT_FILE` and `DIRECTIONS_JSON_FILE` and stop with error: `companion JSON validation failed — this is a bug in the command; please report it`. The translated draft variant MUST NOT have been written yet.
 
-### Step 4.6: Report
+### Step 4.6: Write Translated Draft Variant (Conditional)
+
+If `ALT_PLAN_LANGUAGE` is non-empty, write the translated draft variant to `DRAFT_VARIANT_FILE` after companion JSON validation passes. `DRAFT_VARIANT_FILE` was computed and checked for collision in Phase 1.5 before any canonical outputs were written.
+
+Filename construction rule for variants:
+
+1. Insert `_<ALT_PLAN_LANG_CODE>` before the `.md` suffix of `OUTPUT_FILE`.
+2. The variant file is placed in the same directory as `OUTPUT_FILE`.
+
+Examples:
+
+- `idea.md -> idea_zh.md`
+- `docs/my-idea.md -> docs/my-idea_zh.md`
+
+Variant content rules:
+
+1. Translate human-readable draft prose into `ALT_PLAN_LANGUAGE`; for Chinese, default to Simplified Chinese.
+2. Keep the original idea body byte-identical inside `## Original Idea`.
+3. Preserve identifiers, file paths, API names, command flags, direction IDs, and sentinels.
+4. Preserve the sentinel text exactly: `exploratory, no concrete precedent`.
+5. Do not add information that is absent from the canonical draft.
+6. `DIRECTIONS_JSON_FILE` is not translated, rewritten, or given a language variant.
+
+If `ALT_PLAN_LANGUAGE` is empty, do not create a translated draft variant.
+
+### Step 4.7: Report
 
 Report to the user:
 - Draft path written: `OUTPUT_FILE`
 - Companion JSON path written: `DIRECTIONS_JSON_FILE`
+- Translated draft variant path written (`DRAFT_VARIANT_FILE`) when enabled, otherwise note that the translated draft variant is disabled.
 - Primary direction name.
 - Requested `N` and the actual direction count (note if reduced due to degradation).
 - Next-step hints:
@@ -268,6 +365,7 @@ Report to the user:
 - Phase 1 validation errors stop the command with a clear message. No partial output.
 - Phase 2 degradation follows the retry-once + ≥2 minimum rule stated above.
 - Phase 3 degradation follows the drop-and-continue + ≥2 minimum rule stated above.
-- Never fabricate repo references or prior art. The `exploratory, no concrete precedent` sentinel from subagents is preserved verbatim in the draft.
-- If any phase stops with an error, do not write a partial `OUTPUT_FILE` or `DIRECTIONS_JSON_FILE`.
-- If companion JSON validation fails after writing both files, delete both files and stop.
+- Never fabricate repo references or prior art. The `exploratory, no concrete precedent` sentinel from subagents is preserved verbatim in the draft and any translated draft variant.
+- If the translated draft variant path already exists, stop before Phase 2 with no writes.
+- If any phase stops with an error, do not write partial `OUTPUT_FILE`, `DIRECTIONS_JSON_FILE`, or translated draft variant artifacts.
+- If companion JSON validation fails after writing both canonical files, delete both canonical files and stop; the translated draft variant MUST NOT have been written yet.
