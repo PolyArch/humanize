@@ -151,4 +151,31 @@ make_summary_file "$SUMMARY_FILE" "update" "Normal text flow still exposes the B
 RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
 assert_passes "BitLesson Delta in normal text still passes validation" "$RESULT"
 
+SUMMARY_FILE="$TEST_DIR/deprecate-valid.md"
+make_summary_file "$SUMMARY_FILE" "deprecate" "Subsystem removed; lesson superseded and tombstoned."
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_passes "deprecate action passes with a concrete ID and Notes" "$RESULT"
+
+SUMMARY_FILE="$TEST_DIR/deprecate-none-ids.md"
+cat > "$SUMMARY_FILE" <<EOF
+# Round Summary
+
+## BitLesson Delta
+- Action: deprecate
+- Lesson ID(s): NONE
+- Notes: Reason given but no concrete ID.
+EOF
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_blocked "deprecate action blocks when Lesson ID(s) is NONE" "$RESULT"
+
+SUMMARY_FILE="$TEST_DIR/deprecate-empty-notes.md"
+make_summary_file "$SUMMARY_FILE" "deprecate" "   "
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_blocked_with_notes_error "deprecate action blocks when Notes is whitespace-only" "$RESULT"
+
+SUMMARY_FILE="$TEST_DIR/bogus-action.md"
+make_summary_file "$SUMMARY_FILE" "remove" "Trying an unsupported action verb."
+RESULT=$(run_validator "$SUMMARY_FILE" "$BITLESSON_FILE")
+assert_blocked "unsupported action verb (remove) is rejected" "$RESULT"
+
 print_test_summary "BitLesson Delta Validator Test Summary"

@@ -167,7 +167,8 @@ $BITLESSON_CONTENT
 1. Match only lessons that are directly relevant to the sub-task scope and failure mode.
 2. Prefer precision over recall: do not include weakly related lessons.
 3. If nothing is relevant, return \`NONE\`.
-4. Use only the information in this prompt. Do not use tools, shell commands, browser access, MCP servers, or repository inspection.
+4. Never select a lesson whose entry contains a \`Status: deprecated\` line; treat it as retired.
+5. Use only the information in this prompt. Do not use tools, shell commands, browser access, MCP servers, or repository inspection.
 
 ## Output Format (Stable)
 

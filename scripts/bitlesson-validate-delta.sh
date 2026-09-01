@@ -187,7 +187,7 @@ Your summary is missing the required `## BitLesson Delta` section.
 Required minimal format:
 ```markdown
 ## BitLesson Delta
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): <IDs or NONE>
 - Notes: <what changed and why>
 ```
@@ -203,7 +203,7 @@ BITLESSON_ACTION_CANDIDATES=$(echo "$BITLESSON_DELTA_BLOCK" | sed -nE 's/^[[:spa
 BITLESSON_ACTION_COUNT=$(echo "$BITLESSON_ACTION_CANDIDATES" | awk 'NF{c++} END{print c+0}')
 BITLESSON_ACTION=$(echo "$BITLESSON_ACTION_CANDIDATES" | awk 'NF{print; exit}')
 
-if [[ "$BITLESSON_ACTION_COUNT" -ne 1 ]] || [[ "$BITLESSON_ACTION" != "none" && "$BITLESSON_ACTION" != "add" && "$BITLESSON_ACTION" != "update" ]]; then
+if [[ "$BITLESSON_ACTION_COUNT" -ne 1 ]] || [[ "$BITLESSON_ACTION" != "none" && "$BITLESSON_ACTION" != "add" && "$BITLESSON_ACTION" != "update" && "$BITLESSON_ACTION" != "deprecate" ]]; then
     FALLBACK=$(cat <<'EOF'
 # Invalid BitLesson Delta Action
 
@@ -211,10 +211,11 @@ Your `## BitLesson Delta` section exists, but it must include one action:
 - `none`
 - `add`
 - `update`
+- `deprecate`
 EOF
 )
     REASON=$(load_and_render_safe "$TEMPLATE_DIR" "block/bitlesson-delta-invalid.md" "$FALLBACK")
-    block_exit "$REASON" "Loop: BitLesson Delta must include action none/add/update (round $CURRENT_ROUND)"
+    block_exit "$REASON" "Loop: BitLesson Delta must include action none/add/update/deprecate (round $CURRENT_ROUND)"
 fi
 
 BITLESSON_IDS_RAW=$(echo "$BITLESSON_DELTA_BLOCK" | sed -nE 's/^[[:space:]-]*Lesson ID\(s\):[[:space:]]*(.*)$/\1/p' | head -n1)

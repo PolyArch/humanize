@@ -102,8 +102,10 @@ TEST_SUITES=(
     "test-explore-command-structure.sh"
     # Ask Codex tests
     "test-ask-codex.sh"
-    # Bitlesson routing tests
+    # Bitlesson tests
     "test-bitlesson-select-routing.sh"
+    "test-bitlesson-validate-delta.sh"
+    "test-bitlesson-staleness.sh"
     # Provider routing tests
     "test-model-router.sh"
     # Skill monitor tests

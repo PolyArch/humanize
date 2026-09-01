@@ -39,7 +39,7 @@ Required summary shape:
 
 ```markdown
 ## BitLesson Delta
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): <IDs or NONE>
 - Notes: <what changed and why>
 ```
@@ -47,5 +47,38 @@ Required summary shape:
 Validation rules are strict:
 
 - `Action: none` must use `Lesson ID(s): NONE` or leave the field empty
-- `Action: add` and `Action: update` must reference concrete `BL-YYYYMMDD-short-name` IDs that exist in `.humanize/bitlesson.md`
+- `Action: add`, `Action: update`, and `Action: deprecate` must reference concrete `BL-YYYYMMDD-short-name` IDs that exist in `.humanize/bitlesson.md`
 - `--require-bitlesson-entry-for-none` can be used to block empty knowledge bases from repeatedly reporting `none`
+
+## Deprecating lessons
+
+The knowledge base would otherwise only grow: when a subsystem is removed or a lesson is
+superseded, the entry becomes misleading but there is no contracted way to retire it.
+`Action: deprecate` fills that gap. Deprecation is a **tombstone, not a delete**:
+
+- Keep the entry (so its ID still resolves and the history is preserved) and add a
+  `Status: deprecated — <reason / superseded by BL-…>` line to it.
+- The selector (`scripts/bitlesson-select.sh`) treats any entry with a `Status: deprecated`
+  line as retired and never selects it for a sub-task.
+
+## Staleness check
+
+Lesson *content* (the bug→fix knowledge) usually stays valid across refactors, but the
+*references* it cites (`Scope:` paths, `path/to/file.py`, `dir:line`) drift when code moves.
+The stop gate validates Delta *format* only — it does not re-check that existing lessons still
+point at real files — so after a reorg a lesson can silently rot and a rotted lesson handed to
+an implementer is worse than none.
+
+`scripts/bitlesson-staleness.sh` scans the knowledge base and reports entries whose cited
+paths no longer resolve under the project root:
+
+```bash
+scripts/bitlesson-staleness.sh --bitlesson-file .humanize/bitlesson.md
+# add --strict to exit non-zero when any entry has unresolved references
+```
+
+It is **advisory by default** (exit 0). Deprecated entries are skipped. Path detection is
+heuristic: it checks slash-bearing paths against the project root and bare filenames
+(e.g. `run_infer.py`) anywhere under the root, and ignores glob/brace tokens and illustrative
+snippets it cannot resolve. Use it at loop start (or periodically) to find entries that need an
+`update` (fix the references) or a `deprecate`.

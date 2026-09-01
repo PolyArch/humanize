@@ -6,7 +6,7 @@ Required minimal format:
 
 ```markdown
 ## BitLesson Delta
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): <IDs or NONE>
 - Notes: <what changed and why>
 ```

@@ -18,6 +18,17 @@ Validation Evidence: <tests/commands/logs/PR evidence>
 Source Rounds: <round numbers where problem appeared and was solved>
 ```
 
+## Deprecation
+
+To retire a superseded or obsolete lesson, do not delete it. Keep the entry (its ID must
+still resolve) and append a status line so the selector skips it and the history is preserved:
+
+```markdown
+Status: deprecated — <reason / superseded by BL-YYYYMMDD-short-name>
+```
+
+Report the retirement in the round summary with `Action: deprecate` and the Lesson ID(s).
+
 ## Entries
 
 <!-- Add lessons below using the strict template. -->

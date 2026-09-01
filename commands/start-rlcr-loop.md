@@ -175,7 +175,7 @@ Per round requirements:
 1. Read `.humanize/bitlesson.md` before execution
 2. Run `bitlesson-selector` for each task/sub-task
 3. Apply selected lesson IDs (or `NONE`) during implementation
-4. Include `## BitLesson Delta` in the round summary with `Action: none|add|update`
+4. Include `## BitLesson Delta` in the round summary with `Action: none|add|update|deprecate`
 
 If a problem is solved only after multiple rounds, add or update a precise lesson entry in `.humanize/bitlesson.md` (specific problem + specific solution).
 By default, empty `.humanize/bitlesson.md` does not block `Action: none`; use `--require-bitlesson-entry-for-none` to enforce strict blocking.

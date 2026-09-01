@@ -1391,9 +1391,9 @@ Before executing each task or sub-task, you MUST:
 3. Follow the selected lesson IDs (or \`NONE\`) during implementation
 
 Include a \`## BitLesson Delta\` section in your summary with:
-- Action: none|add|update
+- Action: none|add|update|deprecate
 - Lesson ID(s): NONE or comma-separated IDs
-- Notes: what changed and why (required if action is add or update)
+- Notes: what changed and why (required if action is add, update, or deprecate)
 
 Reference: @$BITLESSON_FILE
 EOF
@@ -1564,7 +1564,7 @@ echo "   - What was implemented"
 echo "   - Files created/modified"
 echo "   - Tests added/passed"
 echo "   - Any remaining items"
-echo "   - ## BitLesson Delta section (Action: none|add|update)"
+echo "   - ## BitLesson Delta section (Action: none|add|update|deprecate)"
 echo ""
 echo "Codex will review this summary to determine if work is complete."
 echo "==========================================="
